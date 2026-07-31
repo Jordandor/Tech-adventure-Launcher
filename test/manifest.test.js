@@ -86,12 +86,14 @@ test('пакетный манифест поддерживает обновле�
     ]
   });
 
+  const gameRoot = path.resolve('/tmp/launcher-game');
+
   assert.equal(manifest.schemaVersion, 2);
   assert.equal(manifest.files[1].policy, 'seed');
   assert.equal(
-    safePackDestination('/tmp/launcher-game', 'options.txt'),
-    path.join('/tmp/launcher-game', 'options.txt')
-  );
+  safePackDestination(gameRoot, 'options.txt'),
+  path.join(gameRoot, 'options.txt')
+);
 });
 
 test('options.txt нельзя превратить в управляемый файл', () => {
