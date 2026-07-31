@@ -12,6 +12,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,11 +21,17 @@ jobs:
           node-version: 24
           cache: npm
 
-      - run: npm ci
-      - run: npm run check
-      - run: npm run dist:win
+      - name: Install dependencies
+        run: npm ci
 
-      - uses: actions/upload-artifact@v4
+      - name: Run checks and tests
+        run: npm run check
+
+      - name: Build Windows installer and portable version
+        run: npm run dist:win -- --publish never
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
           name: Tech-Adventure-Launcher-Windows
           path: |
