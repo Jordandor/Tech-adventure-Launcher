@@ -16,6 +16,7 @@ const defaults = {
   minecraftVersion: '1.21.1',
   neoForgeVersion: '21.1.235',
   manifestUrl: 'https://raw.githubusercontent.com/Jordandor/Tech-adventure/main/pack-manifest.json',
+  runtimeManifestUrl: 'https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest.json',
   serverAddress: '',
   minMemoryMb: 4096,
   maxMemoryMb: 8192,
@@ -72,12 +73,13 @@ test('URL манифеста допускает только HTTPS', () => {
 
 test('пустые служебные ссылки восстанавливаются из новых значений по умолчанию', () => {
   const result = normalizeSettings(
-    { manifestUrl: '', updateRepository: '' },
+    { manifestUrl: '', runtimeManifestUrl: '', updateRepository: '' },
     defaults,
     defaultGameDirectory
   );
 
   assert.equal(result.manifestUrl, defaults.manifestUrl);
+  assert.equal(result.runtimeManifestUrl, defaults.runtimeManifestUrl);
   assert.equal(result.updateRepository, defaults.updateRepository);
 });
 
@@ -85,11 +87,13 @@ test('устаревшая версия NeoForge мигрирует на 21.1.23
   const migrated = migrateSavedSettings({
     neoForgeVersion: '21.1.247',
     manifestUrl: '',
+    runtimeManifestUrl: '',
     updateRepository: ''
   }, defaults);
 
   assert.equal(migrated.neoForgeVersion, '21.1.235');
   assert.equal(Object.hasOwn(migrated, 'manifestUrl'), false);
+  assert.equal(Object.hasOwn(migrated, 'runtimeManifestUrl'), false);
   assert.equal(Object.hasOwn(migrated, 'updateRepository'), false);
 });
 
@@ -103,6 +107,7 @@ test('SettingsStore сохраняет миграцию старых настр�
   await fs.writeFile(settingsPath, JSON.stringify({
     neoForgeVersion: '21.1.247',
     manifestUrl: '',
+    runtimeManifestUrl: '',
     updateRepository: '',
     maxMemoryMb: 12288
   }));
@@ -116,6 +121,7 @@ test('SettingsStore сохраняет миграцию старых настр�
 
   assert.equal(loaded.neoForgeVersion, '21.1.235');
   assert.equal(loaded.manifestUrl, defaults.manifestUrl);
+  assert.equal(loaded.runtimeManifestUrl, defaults.runtimeManifestUrl);
   assert.equal(loaded.updateRepository, defaults.updateRepository);
   assert.equal(loaded.maxMemoryMb, 12288);
 

@@ -76,13 +76,18 @@ function setStatus(text, kind = 'ready') {
   elements.sidebarStatusDot.className = `status-dot ${kind === 'ready' ? '' : kind}`.trim();
 }
 
-function setBusy(value, operation = '') {
+function setBusy(value, operation = '', failed = false, message = '') {
   busy = value;
   elements.playButton.disabled = value;
   elements.verifyButton.disabled = value;
   elements.microsoftLogin.disabled = value;
-  if (value) setStatus(operation || 'Выполняется операция…', 'busy');
-  else setStatus('Готов к запуску');
+  if (value) {
+    setStatus(operation || 'Выполняется операция…', 'busy');
+  } else if (failed) {
+    setStatus(message || 'Операция завершилась с ошибкой', 'error');
+  } else {
+    setStatus('Готов к запуску');
+  }
 }
 
 function setAuthMode(mode, persist = false) {
@@ -132,6 +137,7 @@ function renderPackInfo(pack) {
 
 function hydrateSettings(settings) {
   byId('setting-manifest').value = settings.manifestUrl || '';
+  byId('setting-runtime-manifest').value = settings.runtimeManifestUrl || '';
   byId('setting-minecraft').value = settings.minecraftVersion || '1.21.1';
   byId('setting-neoforge').value = settings.neoForgeVersion || '';
   byId('setting-server').value = settings.serverAddress || '';
@@ -153,6 +159,7 @@ function hydrateSettings(settings) {
 function collectSettings() {
   return {
     manifestUrl: byId('setting-manifest').value.trim(),
+    runtimeManifestUrl: byId('setting-runtime-manifest').value.trim(),
     minecraftVersion: byId('setting-minecraft').value.trim(),
     neoForgeVersion: byId('setting-neoforge').value.trim(),
     serverAddress: byId('setting-server').value.trim(),
@@ -187,7 +194,7 @@ function renderProgress(event) {
   elements.progressBar.classList.remove('indeterminate');
   const percent = Math.max(0, Math.min(100, Math.round((event.current / event.total) * 100)));
   elements.progressBar.style.width = `${percent}%`;
-  elements.progressPercent.textContent = event.phase === 'download'
+  elements.progressPercent.textContent = ['download', 'runtime-download'].includes(event.phase)
     ? `${formatBytes(event.current)} / ${formatBytes(event.total)}`
     : `${percent}%`;
 }
@@ -208,7 +215,13 @@ function phaseCaption(phase) {
     retry: 'Повтор сетевого запроса',
     launch: 'Подготовка процесса Minecraft',
     done: 'Синхронизация завершена',
-    'runtime-ready': 'Игровая среда готова'
+    'runtime-ready': 'Игровая среда готова',
+    'runtime-manifest': 'Проверка базовой игровой среды',
+    'runtime-download': 'Загрузка Minecraft и NeoForge',
+    'runtime-verify': 'Проверка SHA-256 базовой среды',
+    'runtime-extract': 'Распаковка базовой среды',
+    'runtime-install': 'Установка базовой среды',
+    'runtime-bootstrap-ready': 'Базовая игровая среда готова'
   }[phase] || 'Подготовка сборки';
 }
 
@@ -350,7 +363,7 @@ elements.deviceOpen.addEventListener('click', () => window.launcher.openExternal
 byId('device-cancel').addEventListener('click', () => elements.deviceModal.classList.add('hidden'));
 
 window.launcher.onProgress(renderProgress);
-window.launcher.onBusy(({ busy: isBusy, operation }) => setBusy(isBusy, operation));
+window.launcher.onBusy(({ busy: isBusy, operation, failed, message }) => setBusy(isBusy, operation, failed, message));
 window.launcher.onWarning(({ message }) => showToast(message, 'warning', 8000));
 window.launcher.onPackInfo((pack) => renderPackInfo(pack));
 window.launcher.onLog(appendLog);

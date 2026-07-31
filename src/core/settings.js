@@ -47,6 +47,7 @@ function migrateSavedSettings(saved, defaults) {
   const migrated = saved && typeof saved === 'object' ? { ...saved } : {};
 
   if (!String(migrated.manifestUrl || '').trim()) delete migrated.manifestUrl;
+  if (!String(migrated.runtimeManifestUrl || '').trim()) delete migrated.runtimeManifestUrl;
   if (!String(migrated.updateRepository || '').trim()) delete migrated.updateRepository;
 
   const legacyNeoForgeVersions = new Set(['21.1.247']);
@@ -72,6 +73,8 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
   const gameDirectory = path.resolve(gameDirectoryInput || defaultGameDirectory);
   const manifestUrl = String(source.manifestUrl || '').trim()
     || String(defaults.manifestUrl || '').trim();
+  const runtimeManifestUrl = String(source.runtimeManifestUrl || '').trim()
+    || String(defaults.runtimeManifestUrl || '').trim();
   const updateRepository = String(source.updateRepository || '').trim()
     || String(defaults.updateRepository || '').trim();
 
@@ -80,6 +83,7 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
     minecraftVersion: String(source.minecraftVersion || '1.21.1').trim(),
     neoForgeVersion: String(source.neoForgeVersion || '21.1.235').trim(),
     manifestUrl: normalizeOptionalHttpsUrl(manifestUrl, 'Манифест сборки'),
+    runtimeManifestUrl: normalizeOptionalHttpsUrl(runtimeManifestUrl, 'Манифест базовой среды'),
     serverAddress: String(source.serverAddress || '').trim().slice(0, 255),
     minMemoryMb,
     maxMemoryMb,

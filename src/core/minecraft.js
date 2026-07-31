@@ -71,6 +71,34 @@ async function isFile(file) {
   }
 }
 
+async function removeZeroByteFiles(directory) {
+  const queue = [directory];
+  let removed = 0;
+  while (queue.length) {
+    const current = queue.pop();
+    let entries;
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(target);
+      } else if (entry.isFile()) {
+        const stat = await fs.stat(target);
+        if (stat.size === 0) {
+          await fs.rm(target, { force: true });
+          removed += 1;
+        }
+      }
+    }
+  }
+  return removed;
+}
+
 async function runJavaVersion(javaPath) {
   return new Promise((resolve, reject) => {
     const child = spawn(javaPath, ['-version'], { windowsHide: true });
@@ -240,27 +268,58 @@ async function ensureMinecraft({
 }) {
   await fs.mkdir(gameDirectory, { recursive: true });
 
-  if (!force) {
-    const installed = await loadInstalledRuntime({
-      gameDirectory,
-      runtimeRoot,
+  const installed = await loadInstalledRuntime({
+    gameDirectory,
+    runtimeRoot,
+    minecraftVersion,
+    neoForgeVersion,
+    customJavaPath,
+    onProgress
+  });
+  if (installed && !force) {
+    emit(onProgress, 'runtime-ready', 'Использую уже установленный Minecraft и NeoForge.', {
+      current: 1,
+      total: 1,
+      reused: true
+    });
+    return installed;
+  }
+  if (installed && force) {
+    emit(onProgress, 'dependencies', 'Проверяю библиотеки и ресурсы установленной игры…', { indeterminate: true });
+    const resolved = await retryNetworkOperation(
+      'Проверка библиотек и ресурсов Minecraft',
+      async () => {
+        await removeZeroByteFiles(path.join(gameDirectory, 'assets', 'objects'));
+        return installDependencies(installed.resolved, {
+          side: 'client',
+          assetsDownloadConcurrency: 4,
+          librariesDownloadConcurrency: 4
+        });
+      },
+      { attempts: 3, timeoutMs: DEPENDENCIES_TIMEOUT_MS, onProgress }
+    );
+    const stateFile = runtimeStatePath(gameDirectory);
+    const state = await readJson(stateFile) || {};
+    await writeJsonAtomic(stateFile, {
+      ...state,
+      schemaVersion: 1,
       minecraftVersion,
       neoForgeVersion,
-      customJavaPath,
-      onProgress
+      versionId: installed.versionId,
+      verifiedAt: new Date().toISOString()
     });
-    if (installed) {
-      emit(onProgress, 'runtime-ready', 'Использую уже установленный Minecraft и NeoForge.', {
-        current: 1,
-        total: 1,
-        reused: true
-      });
-      return installed;
-    }
-    emit(onProgress, 'recovery', 'Локальная игровая среда неполна. Запускаю восстановление…', {
-      indeterminate: true
+    emit(onProgress, 'runtime-ready', 'Установленная игровая среда проверена.', {
+      current: 1,
+      total: 1,
+      reused: true,
+      verified: true
     });
+    return { ...installed, resolved, reused: true, verified: true };
   }
+
+  emit(onProgress, 'recovery', 'Локальная игровая среда неполна. Запускаю восстановление…', {
+    indeterminate: true
+  });
 
   const stateFile = runtimeStatePath(gameDirectory);
   const runtimeState = await readJson(stateFile);
@@ -277,14 +336,20 @@ async function ensureMinecraft({
   emit(onProgress, 'minecraft', `Устанавливаю и проверяю Minecraft ${minecraftVersion}…`, {
     indeterminate: true
   });
-  const baseVersion = await withTimeout(
-    () => install(versionMeta, gameDirectory, {
-      side: 'client',
-      assetsDownloadConcurrency: 16,
-      librariesDownloadConcurrency: 8
-    }),
-    GAME_INSTALL_TIMEOUT_MS,
-    `Установка Minecraft ${minecraftVersion}`
+  const baseVersion = await retryNetworkOperation(
+    `Установка Minecraft ${minecraftVersion}`,
+    async () => {
+      const removed = await removeZeroByteFiles(path.join(gameDirectory, 'assets', 'objects'));
+      if (removed > 0) {
+        emit(onProgress, 'recovery', `Удалено пустых повреждённых ресурсов: ${removed}.`, { indeterminate: true });
+      }
+      return install(versionMeta, gameDirectory, {
+        side: 'client',
+        assetsDownloadConcurrency: 4,
+        librariesDownloadConcurrency: 4
+      });
+    },
+    { attempts: 3, timeoutMs: GAME_INSTALL_TIMEOUT_MS, onProgress }
   );
 
   const javaComponent = baseVersion.javaVersion?.component
@@ -304,27 +369,30 @@ async function ensureMinecraft({
 
   if (!resolved) {
     emit(onProgress, 'neoforge', `Устанавливаю NeoForge ${neoForgeVersion}…`, { indeterminate: true });
-    versionId = await withTimeout(
+    versionId = await retryNetworkOperation(
+      `Установка NeoForge ${neoForgeVersion}`,
       () => installNeoForged('neoforge', neoForgeVersion, gameDirectory, {
         side: 'client',
         java: java.installer,
-        librariesDownloadConcurrency: 8
+        librariesDownloadConcurrency: 4
       }),
-      NEOFORGE_INSTALL_TIMEOUT_MS,
-      `Установка NeoForge ${neoForgeVersion}`
+      { attempts: 3, timeoutMs: NEOFORGE_INSTALL_TIMEOUT_MS, onProgress }
     );
     resolved = await Version.parse(gameDirectory, versionId);
   }
 
   emit(onProgress, 'dependencies', 'Проверяю библиотеки и ресурсы игры…', { indeterminate: true });
-  resolved = await withTimeout(
-    () => installDependencies(resolved, {
-      side: 'client',
-      assetsDownloadConcurrency: 16,
-      librariesDownloadConcurrency: 8
-    }),
-    DEPENDENCIES_TIMEOUT_MS,
-    'Проверка библиотек и ресурсов Minecraft'
+  resolved = await retryNetworkOperation(
+    'Проверка библиотек и ресурсов Minecraft',
+    async () => {
+      await removeZeroByteFiles(path.join(gameDirectory, 'assets', 'objects'));
+      return installDependencies(resolved, {
+        side: 'client',
+        assetsDownloadConcurrency: 4,
+        librariesDownloadConcurrency: 4
+      });
+    },
+    { attempts: 3, timeoutMs: DEPENDENCIES_TIMEOUT_MS, onProgress }
   );
 
   await writeJsonAtomic(stateFile, {
@@ -435,5 +503,6 @@ module.exports = {
   launchMinecraft,
   inspectRuntimeState,
   withTimeout,
-  retryNetworkOperation
+  retryNetworkOperation,
+  removeZeroByteFiles
 };

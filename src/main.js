@@ -16,6 +16,7 @@ const { SettingsStore } = require('./core/settings');
 const { MicrosoftAuthManager } = require('./core/auth');
 const { createOfflineSession } = require('./core/offline-profile');
 const { syncPack } = require('./core/synchronizer');
+const { ensureRuntimeBootstrap } = require('./core/runtime-bootstrap');
 const { ensureMinecraft, inspectRuntimeState, launchMinecraft } = require('./core/minecraft');
 
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -123,6 +124,7 @@ async function runExclusive(name, operation) {
   await appendLauncherLog(startLine);
   send('launcher:log', startLine);
 
+  let failureMessage = '';
   try {
     const result = await operation();
     const doneLine = `[launcher] ${name}: завершено успешно.\n`;
@@ -130,14 +132,20 @@ async function runExclusive(name, operation) {
     send('launcher:log', doneLine);
     return result;
   } catch (error) {
+    failureMessage = errorMessage(error);
     const details = errorDetails(error);
     const failureLine = `[launcher] ${name}: ошибка\n${details}\n`;
     await appendLauncherLog(failureLine);
     send('launcher:log', failureLine);
-    throw new Error(errorMessage(error));
+    throw new Error(failureMessage);
   } finally {
     busyOperation = null;
-    send('launcher:busy', { busy: false, operation: '' });
+    send('launcher:busy', {
+      busy: false,
+      operation: '',
+      failed: Boolean(failureMessage),
+      message: failureMessage
+    });
   }
 }
 
@@ -172,6 +180,25 @@ async function preparePack(forcePackCheck) {
   if (!settings.manifestUrl) {
     throw new Error('Сначала укажи GitHub-ссылку на манифест сборки в настройках лаунчера.');
   }
+  if (!settings.runtimeManifestUrl) {
+    throw new Error('В настройках отсутствует ссылка на runtime-manifest.json.');
+  }
+
+  const existingRuntime = await inspectRuntimeState(settings.gameDirectory);
+  const existingMatches = existingRuntime.installed
+    && existingRuntime.minecraftVersion === settings.minecraftVersion
+    && existingRuntime.neoForgeVersion === settings.neoForgeVersion;
+  if (!existingMatches) {
+    const bootstrap = await ensureRuntimeBootstrap({
+      runtimeManifestUrl: settings.runtimeManifestUrl,
+      gameDirectory: settings.gameDirectory,
+      expectedMinecraftVersion: settings.minecraftVersion,
+      expectedNeoForgeVersion: settings.neoForgeVersion,
+      onProgress: progressSink
+    });
+    if (bootstrap.warning) send('launcher:warning', { message: bootstrap.warning });
+  }
+
   const syncResult = await syncPack({
     manifestUrl: settings.manifestUrl,
     gameDirectory: settings.gameDirectory,
@@ -193,6 +220,21 @@ async function preparePack(forcePackCheck) {
     neoForgeVersion: pack?.neoForgeVersion || settings.neoForgeVersion,
     serverAddress: pack?.serverAddress || settings.serverAddress
   };
+
+  if (
+    effective.minecraftVersion !== settings.minecraftVersion
+    || effective.neoForgeVersion !== settings.neoForgeVersion
+  ) {
+    const bootstrap = await ensureRuntimeBootstrap({
+      runtimeManifestUrl: settings.runtimeManifestUrl,
+      gameDirectory: effective.gameDirectory,
+      expectedMinecraftVersion: effective.minecraftVersion,
+      expectedNeoForgeVersion: effective.neoForgeVersion,
+      onProgress: progressSink
+    });
+    if (bootstrap.warning) send('launcher:warning', { message: bootstrap.warning });
+  }
+
   currentRuntime = await ensureMinecraft({
     gameDirectory: effective.gameDirectory,
     runtimeRoot: path.join(app.getPath('userData'), 'runtime'),
@@ -363,7 +405,7 @@ function registerIpc() {
   });
   ipcMain.handle('update:check', () => checkForLauncherUpdates(true));
   ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
-  ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(false, true));
+  ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(true, true));
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
   ipcMain.handle('window:close', () => mainWindow?.close());
 }
