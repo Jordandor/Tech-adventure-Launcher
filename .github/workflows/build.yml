@@ -1,144 +1,49 @@
-name: Publish optimized modpack
+name: Build launcher
 
 on:
   workflow_dispatch:
-    inputs:
-      pack_version:
-        description: Version of the Minecraft pack, for example 1.0.0
-        required: true
-        default: 1.0.0
-      news:
-        description: Short update text shown in the launcher
-        required: false
-        default: First optimized Tech Adventure release
+  push:
+    branches: [main]
+    tags: ['v*']
 
 permissions:
   contents: write
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  windows:
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout pack repository
-        uses: actions/checkout@v4
-        with:
-          path: pack-repo
+      - uses: actions/checkout@v4
 
-      - name: Checkout launcher tools
-        uses: actions/checkout@v4
-        with:
-          repository: Jordandor/Tech-adventure-Launcher
-          ref: main
-          path: launcher-src
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: launcher-src/package-lock.json
 
-      - name: Install manifest generator dependencies
-        working-directory: launcher-src
+      - name: Install dependencies
         run: npm ci
 
-      - name: Find and download Stable.ver.zip
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          SOURCE_TAG="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq '.[] | select(any(.assets[]?; (.name | ascii_downcase) == "stable.ver.zip")) | .tag_name' \
-            | head -n 1)"
-          if [ -z "$SOURCE_TAG" ]; then
-            echo "Stable.ver.zip was not found in published releases."
-            exit 1
-          fi
-          echo "Using source release: $SOURCE_TAG"
-          mkdir -p input
-          gh release download "$SOURCE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "Stable.ver.zip" \
-            --dir input
+      - name: Run checks and tests
+        run: npm run check
 
-      - name: Extract source pack
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p extracted
-          7z x input/Stable.ver.zip -oextracted -y
-          MODS_DIRECTORY="$(find extracted -type d -iname mods -print -quit)"
-          if [ -z "$MODS_DIRECTORY" ]; then
-            echo "The archive does not contain a mods directory."
-            exit 1
-          fi
-          SOURCE_DIRECTORY="$(dirname "$MODS_DIRECTORY")"
-          echo "Detected pack root: $SOURCE_DIRECTORY"
-          echo "SOURCE_DIRECTORY=$SOURCE_DIRECTORY" >> "$GITHUB_ENV"
+      - name: Build Windows installer and portable version
+        run: npm run dist:win -- --publish never
 
-      - name: Generate differential packages and manifest
-        shell: bash
-        env:
-          PACK_VERSION: ${{ inputs.pack_version }}
-          PACK_NEWS: ${{ inputs.news }}
-        run: |
-          set -euo pipefail
-          PACK_TAG="pack-v${PACK_VERSION}"
-          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${PACK_TAG}/"
-          mkdir -p generated-assets
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tech-Adventure-Launcher-Windows
+          path: |
+            dist/*.exe
+            dist/*.yml
+            dist/*.blockmap
 
-          GENERATOR_ARGS=(
-            --source "$SOURCE_DIRECTORY"
-            --base-url "$BASE_URL"
-            --pack-version "$PACK_VERSION"
-            --assets generated-assets
-            --output pack-repo/pack-manifest.json
-            --plan pack-repo/pack-publish-plan.json
-            --minecraft 1.21.1
-            --neoforge 21.1.235
-            --news "$PACK_NEWS"
-          )
-
-          if [ -f pack-repo/pack-manifest.json ]; then
-            cp pack-repo/pack-manifest.json previous-pack-manifest.json
-            GENERATOR_ARGS+=(--previous previous-pack-manifest.json)
-          fi
-
-          node launcher-src/tools/generate-manifest.mjs "${GENERATOR_ARGS[@]}"
-          echo "PACK_TAG=$PACK_TAG" >> "$GITHUB_ENV"
-
-      - name: Create pack release and upload generated assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PACK_VERSION: ${{ inputs.pack_version }}
-        run: |
-          set -euo pipefail
-          if gh release view "$PACK_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $PACK_TAG already exists. Use a new pack version."
-            exit 1
-          fi
-
-          gh release create "$PACK_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target main \
-            --title "Tech Adventure pack ${PACK_VERSION}" \
-            --notes "Optimized differential packages for launcher distribution."
-
-          find generated-assets -maxdepth 1 -type f -print0 \
-            | xargs -0 -r gh release upload "$PACK_TAG" --repo "$GITHUB_REPOSITORY"
-
-      - name: Commit manifest to main
-        shell: bash
-        working-directory: pack-repo
-        env:
-          PACK_VERSION: ${{ inputs.pack_version }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pack-manifest.json pack-publish-plan.json
-          git commit -m "Publish pack manifest ${PACK_VERSION}"
-          git push
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.yml
+            dist/*.blockmap
