@@ -5,9 +5,43 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { Authflow, Titles } = require('prismarine-auth');
 
+const MINECRAFT_XSTS_RELYING_PARTY = 'rp://api.minecraftservices.com/';
+const MINECRAFT_CLIENT_ID_FILE = 'minecraft-client-id.txt';
+
 function cacheFileName(username, cacheName) {
   const digest = crypto.createHash('sha256').update(`${username}:${cacheName}`).digest('hex');
   return `${digest}.authcache`;
+}
+
+
+function createMinecraftClientId() {
+  return Buffer.from(crypto.randomUUID(), 'utf8').toString('base64');
+}
+
+function isValidMinecraftClientId(value) {
+  try {
+    const decoded = Buffer.from(String(value || '').trim(), 'base64').toString('utf8');
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(decoded);
+  } catch {
+    return false;
+  }
+}
+
+async function getOrCreateMinecraftClientId(cacheDirectory) {
+  const file = path.join(cacheDirectory, MINECRAFT_CLIENT_ID_FILE);
+  try {
+    const existing = (await fs.readFile(file, 'utf8')).trim();
+    if (isValidMinecraftClientId(existing)) return existing;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  const clientId = createMinecraftClientId();
+  await fs.mkdir(cacheDirectory, { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, `${clientId}\n`, { encoding: 'utf8', mode: 0o600 });
+  await fs.rename(temporary, file);
+  return clientId;
 }
 
 class EncryptedFileCache {
@@ -113,6 +147,13 @@ class MicrosoftAuthManager {
       if (!response?.profile?.id || !response?.profile?.name || !response?.token) {
         throw new Error('Microsoft вернул неполные данные профиля Minecraft.');
       }
+
+      const xbox = await flow.getXboxToken(MINECRAFT_XSTS_RELYING_PARTY);
+      const xuid = String(xbox?.userXUID || '').trim();
+      if (!/^\d+$/.test(xuid)) {
+        throw new Error('Microsoft не вернул Xbox User ID, необходимый для лицензионного запуска Minecraft.');
+      }
+      const clientId = await getOrCreateMinecraftClientId(this.cacheDirectory);
       const skins = Array.isArray(response.profile.skins) ? response.profile.skins : [];
       const activeSkin = skins.find((skin) => skin?.state === 'ACTIVE') || skins[0] || null;
       this.session = {
@@ -125,7 +166,9 @@ class MicrosoftAuthManager {
           capes: response.profile.capes || []
         },
         accessToken: response.token,
-        userType: 'mojang'
+        userType: 'msa',
+        xuid,
+        clientId
       };
       return this.publicState();
     } catch (error) {
@@ -158,5 +201,10 @@ module.exports = {
   MicrosoftAuthManager,
   EncryptedFileCache,
   cacheFileName,
-  friendlyAuthError
+  createMinecraftClientId,
+  isValidMinecraftClientId,
+  getOrCreateMinecraftClientId,
+  friendlyAuthError,
+  MINECRAFT_XSTS_RELYING_PARTY,
+  MINECRAFT_CLIENT_ID_FILE
 };

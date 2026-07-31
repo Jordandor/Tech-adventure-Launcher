@@ -289,6 +289,59 @@ async function ensureMinecraft({
   return { ...installed, verified: Boolean(force) };
 }
 
+function replaceAccountLaunchPlaceholders(value, replacements) {
+  if (typeof value === 'string') {
+    return value
+      .replaceAll('${clientid}', replacements.clientId)
+      .replaceAll('${auth_xuid}', replacements.xuid);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => replaceAccountLaunchPlaceholders(entry, replacements));
+  }
+  return value;
+}
+
+function withMicrosoftLaunchArguments(resolvedVersion, session) {
+  if (session?.mode !== 'microsoft') return resolvedVersion;
+
+  const accessToken = String(session.accessToken || '').trim();
+  const clientId = String(session.clientId || '').trim();
+  const xuid = String(session.xuid || '').trim();
+  if (!accessToken) throw new Error('Microsoft-сессия не содержит токен Minecraft. Обнови вход в лаунчере.');
+  if (!clientId) throw new Error('Microsoft-сессия не содержит Client ID. Обнови вход в лаунчере.');
+  if (!/^\d+$/.test(xuid)) throw new Error('Microsoft-сессия не содержит корректный Xbox User ID. Обнови вход в лаунчере.');
+
+  const gameArguments = resolvedVersion?.arguments?.game;
+  if (!Array.isArray(gameArguments)) {
+    throw new Error('Профиль Minecraft не содержит игровых аргументов для Microsoft-входа.');
+  }
+
+  const replacements = { clientId, xuid };
+  const patchedGameArguments = gameArguments.map((argument) => {
+    if (typeof argument === 'string' || Array.isArray(argument)) {
+      return replaceAccountLaunchPlaceholders(argument, replacements);
+    }
+    if (!argument || typeof argument !== 'object') return argument;
+    return {
+      ...argument,
+      value: replaceAccountLaunchPlaceholders(argument.value, replacements)
+    };
+  });
+
+  const serialized = JSON.stringify(patchedGameArguments);
+  if (serialized.includes('${clientid}') || serialized.includes('${auth_xuid}')) {
+    throw new Error('Не удалось подготовить аргументы лицензионного запуска Minecraft.');
+  }
+
+  return {
+    ...resolvedVersion,
+    arguments: {
+      ...resolvedVersion.arguments,
+      game: patchedGameArguments
+    }
+  };
+}
+
 function parseServerAddress(value) {
   const text = String(value || '').trim();
   if (!text) return null;
@@ -319,11 +372,12 @@ async function launchMinecraft({
     throw new Error('Сначала выбери способ входа.');
   }
   const server = parseServerAddress(serverAddress);
+  const launchVersion = withMicrosoftLaunchArguments(runtime.resolved, session);
   const child = await launch({
     gamePath: gameDirectory,
     resourcePath: gameDirectory,
     javaPath: runtime.java.launcher,
-    version: runtime.resolved,
+    version: launchVersion,
     gameProfile: {
       id: session.profile.id.replaceAll('-', ''),
       name: session.profile.name
@@ -389,6 +443,8 @@ module.exports = {
   loadInstalledRuntime,
   ensureMinecraft,
   parseServerAddress,
+  replaceAccountLaunchPlaceholders,
+  withMicrosoftLaunchArguments,
   launchMinecraft,
   inspectRuntimeState,
   withTimeout,
