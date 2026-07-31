@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { normalizeSettings } = require('../src/core/settings');
 
 const defaults = {
@@ -19,26 +20,46 @@ const defaults = {
   updateRepository: ''
 };
 
+const defaultGameDirectory = path.resolve('/tmp/game');
+
 test('настройки памяти и пути нормализуются', () => {
-  const result = normalizeSettings({ minMemoryMb: 4096, maxMemoryMb: 12288 }, defaults, '/tmp/game');
+  const result = normalizeSettings(
+    { minMemoryMb: 4096, maxMemoryMb: 12288 },
+    defaults,
+    defaultGameDirectory
+  );
+
   assert.equal(result.maxMemoryMb, 12288);
-  assert.equal(result.gameDirectory, '/tmp/game');
+  assert.equal(result.gameDirectory, defaultGameDirectory);
 });
 
 test('максимум памяти не может быть меньше минимума', () => {
   assert.throws(
-    () => normalizeSettings({ minMemoryMb: 8192, maxMemoryMb: 4096 }, defaults, '/tmp/game'),
+    () => normalizeSettings(
+      { minMemoryMb: 8192, maxMemoryMb: 4096 },
+      defaults,
+      defaultGameDirectory
+    ),
     /не может быть меньше/
   );
 });
 
 test('URL манифеста допускает только HTTPS', () => {
   assert.throws(
-    () => normalizeSettings({ manifestUrl: 'http://example.org/manifest.json' }, defaults, '/tmp/game'),
+    () => normalizeSettings(
+      { manifestUrl: 'http://example.org/manifest.json' },
+      defaults,
+      defaultGameDirectory
+    ),
     /HTTPS/
   );
+
   assert.throws(
-    () => normalizeSettings({ manifestUrl: 'https://example.org/manifest.json' }, defaults, '/tmp/game'),
+    () => normalizeSettings(
+      { manifestUrl: 'https://example.org/manifest.json' },
+      defaults,
+      defaultGameDirectory
+    ),
     /GitHub/
   );
 });
