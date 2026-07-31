@@ -215,7 +215,7 @@ function printHelp() {
   --direct-threshold-mb N   Файлы от N МиБ публикуются отдельно (по умолчанию 2)
   --buckets N               Число стабильных ZIP-корзин для мелких файлов (по умолчанию 64)
   --minecraft <версия>      По умолчанию 1.21.1
-  --neoforge <версия>       По умолчанию 21.1.247
+  --neoforge <версия>       По умолчанию 21.1.235
   --server <адрес:порт>     Сервер для автоматического подключения
   --news <текст>            Новость этой версии
 
@@ -348,7 +348,7 @@ async function generateManifest(args) {
       name: String(args.name || 'Tech Adventure'),
       version: packVersion,
       minecraftVersion: String(args.minecraft || '1.21.1'),
-      neoForgeVersion: String(args.neoforge || '21.1.247'),
+      neoForgeVersion: String(args.neoforge || '21.1.235'),
       serverAddress: String(args.server || ''),
       news: String(args.news || '')
     },

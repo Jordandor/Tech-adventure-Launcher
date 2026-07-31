@@ -203,6 +203,9 @@ function phaseCaption(phase) {
     minecraft: 'Официальные файлы Minecraft',
     neoforge: 'Загрузчик модификаций NeoForge',
     dependencies: 'Библиотеки и игровые ресурсы',
+    runtime: 'Проверка установленной игровой среды',
+    recovery: 'Восстановление игровой среды',
+    retry: 'Повтор сетевого запроса',
     launch: 'Подготовка процесса Minecraft',
     done: 'Синхронизация завершена',
     'runtime-ready': 'Игровая среда готова'

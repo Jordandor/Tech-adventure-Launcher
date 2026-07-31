@@ -1,7 +1,7 @@
 {
   "packName": "Tech Adventure",
   "minecraftVersion": "1.21.1",
-  "neoForgeVersion": "21.1.247",
+  "neoForgeVersion": "21.1.235",
   "manifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure/main/pack-manifest.json",
   "serverAddress": "",
   "minMemoryMb": 4096,
@@ -10,5 +10,5 @@
   "customJavaPath": "",
   "closeLauncherOnGameStart": false,
   "autoUpdateLauncher": true,
-  "updateRepository": "Jordandor/Tech-adventure-launcher"
+  "updateRepository": "Jordandor/Tech-adventure-Launcher"
 }

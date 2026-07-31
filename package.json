@@ -1,6 +1,6 @@
 {
   "name": "tech-adventure-launcher",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Лаунчер сборки Tech Adventure для Minecraft 1.21.1 NeoForge",
   "main": "src/main.js",
@@ -83,7 +83,7 @@
       {
         "provider": "github",
         "owner": "Jordandor",
-        "repo": "Tech-adventure-launcher",
+        "repo": "Tech-adventure-Launcher",
         "releaseType": "release"
       }
     ]

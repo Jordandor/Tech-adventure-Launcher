@@ -43,6 +43,23 @@ function normalizeUpdateRepository(value) {
   return text;
 }
 
+function migrateSavedSettings(saved, defaults) {
+  const migrated = saved && typeof saved === 'object' ? { ...saved } : {};
+
+  if (!String(migrated.manifestUrl || '').trim()) delete migrated.manifestUrl;
+  if (!String(migrated.updateRepository || '').trim()) delete migrated.updateRepository;
+
+  const legacyNeoForgeVersions = new Set(['21.1.247']);
+  if (
+    legacyNeoForgeVersions.has(String(migrated.neoForgeVersion || '').trim())
+    && defaults.neoForgeVersion
+  ) {
+    migrated.neoForgeVersion = defaults.neoForgeVersion;
+  }
+
+  return migrated;
+}
+
 function normalizeSettings(input, defaults, defaultGameDirectory) {
   const source = { ...defaults, ...(input || {}) };
   const minMemoryMb = asMemory(source.minMemoryMb, 4096);
@@ -53,12 +70,16 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
 
   const gameDirectoryInput = String(source.gameDirectory ?? '').trim();
   const gameDirectory = path.resolve(gameDirectoryInput || defaultGameDirectory);
+  const manifestUrl = String(source.manifestUrl || '').trim()
+    || String(defaults.manifestUrl || '').trim();
+  const updateRepository = String(source.updateRepository || '').trim()
+    || String(defaults.updateRepository || '').trim();
 
   return {
     packName: String(source.packName || 'Tech Adventure').trim().slice(0, 80),
     minecraftVersion: String(source.minecraftVersion || '1.21.1').trim(),
-    neoForgeVersion: String(source.neoForgeVersion || '21.1.247').trim(),
-    manifestUrl: normalizeOptionalHttpsUrl(source.manifestUrl, 'Манифест сборки'),
+    neoForgeVersion: String(source.neoForgeVersion || '21.1.235').trim(),
+    manifestUrl: normalizeOptionalHttpsUrl(manifestUrl, 'Манифест сборки'),
     serverAddress: String(source.serverAddress || '').trim().slice(0, 255),
     minMemoryMb,
     maxMemoryMb,
@@ -66,7 +87,7 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
     customJavaPath: String(source.customJavaPath || '').trim(),
     closeLauncherOnGameStart: asBoolean(source.closeLauncherOnGameStart, false),
     autoUpdateLauncher: asBoolean(source.autoUpdateLauncher, true),
-    updateRepository: normalizeUpdateRepository(source.updateRepository),
+    updateRepository: normalizeUpdateRepository(updateRepository),
     authMode: source.authMode === 'microsoft' ? 'microsoft' : 'offline',
     offlineUsername: String(source.offlineUsername || '').trim().slice(0, 16),
     lastMicrosoftProfile: source.lastMicrosoftProfile && typeof source.lastMicrosoftProfile === 'object'
@@ -104,7 +125,8 @@ class SettingsStore {
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    this.value = normalizeSettings(saved, this.defaults, this.defaultGameDirectory);
+    const migrated = migrateSavedSettings(saved, this.defaults);
+    this.value = normalizeSettings(migrated, this.defaults, this.defaultGameDirectory);
     await writeJsonAtomic(this.settingsPath, this.value);
     return this.get();
   }
@@ -127,5 +149,6 @@ module.exports = {
   normalizeSettings,
   normalizeOptionalHttpsUrl,
   normalizeUpdateRepository,
+  migrateSavedSettings,
   writeJsonAtomic
 };

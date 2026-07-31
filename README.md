@@ -122,7 +122,7 @@ npm run manifest -- `
 - манифест `Jordandor/Tech-adventure`;
 - репозиторий обновлений `Jordandor/Tech-adventure-launcher`;
 - Minecraft 1.21.1;
-- NeoForge 21.1.247.
+- NeoForge 21.1.235.
 
 Адрес игрового сервера можно задать в манифесте либо в настройках лаунчера. Значение из манифеста имеет приоритет.
 

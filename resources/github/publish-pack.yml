@@ -18,7 +18,7 @@ on:
       neoforge_version:
         description: Exact NeoForge version
         required: true
-        default: 21.1.247
+        default: 21.1.235
       server_address:
         description: Optional server host:port
         required: false
@@ -55,7 +55,7 @@ jobs:
       - name: Check out publisher
         uses: actions/checkout@v4
         with:
-          repository: Jordandor/Tech-adventure-launcher
+          repository: Jordandor/Tech-adventure-Launcher
           path: launcher
 
       - name: Set up Node.js

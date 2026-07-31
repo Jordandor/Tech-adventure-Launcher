@@ -30,6 +30,8 @@ let gameRunning = false;
 let updateCheckTimer = null;
 let updateCheckInitialTimer = null;
 let updateCheckWasManual = false;
+let lastProgressLogKey = '';
+let lastProgressLogAt = 0;
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
@@ -41,19 +43,70 @@ function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
+function collectErrorMessages(error, result = [], seen = new Set()) {
+  if (error == null) return result;
+  if (typeof error !== 'object') {
+    const text = String(error).trim();
+    if (text) result.push(text);
+    return result;
+  }
+  if (seen.has(error)) return result;
+  seen.add(error);
+
+  const message = String(error.message || error.name || '').trim();
+  if (message && message !== 'AggregateError') result.push(message);
+
+  if (Array.isArray(error.errors)) {
+    for (const nested of error.errors) collectErrorMessages(nested, result, seen);
+  }
+  if (error.cause) collectErrorMessages(error.cause, result, seen);
+  return result;
+}
+
 function errorMessage(error) {
-  return String(error?.message || error || 'Неизвестная ошибка');
+  const messages = [...new Set(collectErrorMessages(error))];
+  if (messages.length === 0) return String(error || 'Неизвестная ошибка');
+  if (messages.length === 1) return messages[0];
+  return `${messages[0]} Причины: ${messages.slice(1).join(' | ')}`;
+}
+
+function errorDetails(error) {
+  const messages = [...new Set(collectErrorMessages(error))];
+  const stack = String(error?.stack || '').trim();
+  const lines = [];
+  if (messages.length > 0) {
+    lines.push(messages[0]);
+    for (const message of messages.slice(1)) lines.push(`  - ${message}`);
+  }
+  if (stack && !lines.includes(stack)) lines.push(stack);
+  return lines.join('\n') || 'Неизвестная ошибка';
 }
 
 async function appendLauncherLog(line) {
-  const logDirectory = path.join(app.getPath('userData'), 'logs');
-  await fs.mkdir(logDirectory, { recursive: true });
-  const text = String(line || '');
-  await fs.appendFile(path.join(logDirectory, 'launcher.log'), text, 'utf8').catch(() => {});
+  try {
+    const logDirectory = path.join(app.getPath('userData'), 'logs');
+    await fs.mkdir(logDirectory, { recursive: true });
+    const text = String(line || '');
+    await fs.appendFile(path.join(logDirectory, 'launcher.log'), text, 'utf8');
+  } catch {
+    // Ошибка журнала не должна блокировать запуск игры.
+  }
 }
 
 function progressSink(event) {
   send('launcher:progress', event);
+  const message = String(event?.message || '').trim();
+  if (!message) return;
+
+  const key = `${event.phase || 'progress'}:${message}`;
+  const now = Date.now();
+  if (key === lastProgressLogKey && now - lastProgressLogAt < 5000) return;
+  lastProgressLogKey = key;
+  lastProgressLogAt = now;
+
+  const line = `[launcher:${event.phase || 'progress'}] ${message}\n`;
+  appendLauncherLog(line);
+  send('launcher:log', line);
 }
 
 function logSink(text) {
@@ -65,8 +118,23 @@ async function runExclusive(name, operation) {
   if (busyOperation) throw new Error(`Сейчас уже выполняется операция «${busyOperation}».`);
   busyOperation = name;
   send('launcher:busy', { busy: true, operation: name });
+  const startedAt = new Date().toISOString();
+  const startLine = `[launcher] ${startedAt} — ${name}\n`;
+  await appendLauncherLog(startLine);
+  send('launcher:log', startLine);
+
   try {
-    return await operation();
+    const result = await operation();
+    const doneLine = `[launcher] ${name}: завершено успешно.\n`;
+    await appendLauncherLog(doneLine);
+    send('launcher:log', doneLine);
+    return result;
+  } catch (error) {
+    const details = errorDetails(error);
+    const failureLine = `[launcher] ${name}: ошибка\n${details}\n`;
+    await appendLauncherLog(failureLine);
+    send('launcher:log', failureLine);
+    throw new Error(errorMessage(error));
   } finally {
     busyOperation = null;
     send('launcher:busy', { busy: false, operation: '' });
@@ -131,7 +199,8 @@ async function preparePack(forcePackCheck) {
     minecraftVersion: effective.minecraftVersion,
     neoForgeVersion: effective.neoForgeVersion,
     customJavaPath: effective.customJavaPath,
-    onProgress: progressSink
+    onProgress: progressSink,
+    force: forcePackCheck
   });
   return { settings: effective, syncResult, runtime: currentRuntime };
 }
@@ -200,9 +269,11 @@ function configureUpdater() {
   autoUpdater.on('download-progress', (data) => send('update:state', { type: 'progress', data }));
   autoUpdater.on('update-downloaded', (data) => send('update:state', { type: 'downloaded', data }));
   autoUpdater.on('error', (error) => {
+    const message = errorMessage(error);
+    appendLauncherLog(`[launcher:update] ${errorDetails(error)}\n`);
     send('update:state', {
       type: 'error',
-      data: { message: errorMessage(error), manual: updateCheckWasManual }
+      data: { message, manual: updateCheckWasManual }
     });
     updateCheckWasManual = false;
   });
@@ -347,7 +418,8 @@ app.whenReady().then(async () => {
   registerIpc();
   createWindow();
   scheduleUpdateChecks();
-}).catch((error) => {
+}).catch(async (error) => {
+  await appendLauncherLog(`[launcher:start] ${errorDetails(error)}\n`);
   dialog.showErrorBox('Tech Adventure Launcher', errorMessage(error));
   app.quit();
 });
