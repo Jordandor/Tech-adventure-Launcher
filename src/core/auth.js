@@ -113,12 +113,15 @@ class MicrosoftAuthManager {
       if (!response?.profile?.id || !response?.profile?.name || !response?.token) {
         throw new Error('Microsoft вернул неполные данные профиля Minecraft.');
       }
+      const skins = Array.isArray(response.profile.skins) ? response.profile.skins : [];
+      const activeSkin = skins.find((skin) => skin?.state === 'ACTIVE') || skins[0] || null;
       this.session = {
         mode: 'microsoft',
         profile: {
           id: response.profile.id.replaceAll('-', ''),
           name: response.profile.name,
-          skins: response.profile.skins || [],
+          skinUrl: String(activeSkin?.url || ''),
+          skins,
           capes: response.profile.capes || []
         },
         accessToken: response.token,

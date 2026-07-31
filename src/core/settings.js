@@ -43,6 +43,27 @@ function normalizeUpdateRepository(value) {
   return text;
 }
 
+function normalizeMinecraftSkinUrl(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  try {
+    const url = new URL(text);
+    if (!['http:', 'https:'].includes(url.protocol) || url.hostname.toLowerCase() !== 'textures.minecraft.net') return '';
+    url.protocol = 'https:';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+function profileSkinUrl(profile) {
+  const direct = normalizeMinecraftSkinUrl(profile?.skinUrl);
+  if (direct) return direct;
+  const skins = Array.isArray(profile?.skins) ? profile.skins : [];
+  const active = skins.find((skin) => skin?.state === 'ACTIVE') || skins[0];
+  return normalizeMinecraftSkinUrl(active?.url);
+}
+
 function migrateSavedSettings(saved, defaults) {
   const migrated = saved && typeof saved === 'object' ? { ...saved } : {};
 
@@ -107,7 +128,8 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
     lastMicrosoftProfile: source.lastMicrosoftProfile && typeof source.lastMicrosoftProfile === 'object'
       ? {
           name: String(source.lastMicrosoftProfile.name || '').slice(0, 16),
-          id: String(source.lastMicrosoftProfile.id || '').replaceAll('-', '').slice(0, 32)
+          id: String(source.lastMicrosoftProfile.id || '').replaceAll('-', '').slice(0, 32),
+          skinUrl: profileSkinUrl(source.lastMicrosoftProfile)
         }
       : null
   };
@@ -163,6 +185,8 @@ module.exports = {
   normalizeSettings,
   normalizeOptionalHttpsUrl,
   normalizeUpdateRepository,
+  normalizeMinecraftSkinUrl,
+  profileSkinUrl,
   migrateSavedSettings,
   writeJsonAtomic
 };

@@ -36,6 +36,16 @@ let lastProgressLogAt = 0;
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
+async function countInstalledMods(gameDirectory) {
+  try {
+    const entries = await fs.readdir(path.join(gameDirectory, 'mods'), { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.jar')).length;
+  } catch (error) {
+    if (error.code === 'ENOENT') return 0;
+    return null;
+  }
+}
+
 function resourcePath(...parts) {
   return path.join(app.getAppPath(), ...parts);
 }
@@ -157,6 +167,7 @@ async function loadState() {
     settings,
     auth: authManager.publicState(),
     runtime: await inspectRuntimeState(settings.gameDirectory),
+    modCount: await countInstalledMods(settings.gameDirectory),
     gameRunning
   };
 }
@@ -201,9 +212,11 @@ async function preparePack(forcePackCheck) {
   });
   if (syncResult.warning) send('launcher:warning', { message: syncResult.warning });
   if (syncResult.manifest) {
+    const modCount = await countInstalledMods(settings.gameDirectory);
     send('launcher:pack-info', {
       ...syncResult.manifest.pack,
-      fileCount: syncResult.managedFileCount ?? syncResult.manifest.files.length
+      fileCount: syncResult.managedFileCount ?? syncResult.manifest.files.length,
+      modCount
     });
   }
 

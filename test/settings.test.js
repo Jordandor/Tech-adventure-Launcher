@@ -8,7 +8,8 @@ const path = require('node:path');
 const {
   SettingsStore,
   normalizeSettings,
-  migrateSavedSettings
+  migrateSavedSettings,
+  normalizeMinecraftSkinUrl
 } = require('../src/core/settings');
 
 const defaults = {
@@ -104,6 +105,24 @@ test('старый Prism runtime-манифест мигрирует на ста
   }, defaults);
 
   assert.equal(migrated.runtimeManifestUrl, defaults.runtimeManifestUrl);
+});
+
+test('лицо скина Microsoft сохраняется только с textures.minecraft.net', () => {
+  const skinUrl = 'https://textures.minecraft.net/texture/abcdef123456';
+  const result = normalizeSettings({
+    lastMicrosoftProfile: {
+      name: 'Player',
+      id: '1234567890abcdef1234567890abcdef',
+      skins: [{ state: 'ACTIVE', url: skinUrl }]
+    }
+  }, defaults, defaultGameDirectory);
+
+  assert.equal(result.lastMicrosoftProfile.skinUrl, skinUrl);
+  assert.equal(normalizeMinecraftSkinUrl('https://example.org/skin.png'), '');
+  assert.equal(
+    normalizeMinecraftSkinUrl('http://textures.minecraft.net/texture/test'),
+    'https://textures.minecraft.net/texture/test'
+  );
 });
 
 test('SettingsStore сохраняет миграцию старых настроек', async (t) => {

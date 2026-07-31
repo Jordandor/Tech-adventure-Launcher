@@ -17,6 +17,7 @@ const elements = {
   offlineUsername: byId('offline-username'),
   microsoftName: byId('microsoft-name'),
   microsoftCaption: byId('microsoft-caption'),
+  microsoftAvatar: byId('microsoft-avatar'),
   microsoftLogin: byId('microsoft-login'),
   microsoftLogout: byId('microsoft-logout'),
   playButton: byId('play-button'),
@@ -47,6 +48,9 @@ let busy = false;
 let deviceVerificationUri = 'https://www.microsoft.com/link';
 let toastTimer = null;
 let logText = '[launcher] Ожидание запуска…\n';
+let avatarRequestId = 0;
+let gameExitWasCrash = false;
+let gameActive = false;
 
 function showToast(message, type = 'normal', duration = 4800) {
   clearTimeout(toastTimer);
@@ -76,6 +80,85 @@ function setStatus(text, kind = 'ready') {
   elements.sidebarStatusDot.className = `status-dot ${kind === 'ready' ? '' : kind}`.trim();
 }
 
+function setProgressComplete(title, detail) {
+  elements.progressTitle.textContent = title;
+  elements.progressDetail.textContent = detail;
+  elements.progressBar.classList.remove('indeterminate');
+  elements.progressBar.style.width = '100%';
+  elements.progressPercent.textContent = '100%';
+}
+
+function russianModLabel(count) {
+  const absolute = Math.abs(count) % 100;
+  const last = absolute % 10;
+  if (absolute > 10 && absolute < 20) return 'модов';
+  if (last === 1) return 'мод';
+  if (last >= 2 && last <= 4) return 'мода';
+  return 'модов';
+}
+
+function safeSkinUrl(profile) {
+  const candidates = [
+    profile?.skinUrl,
+    ...(Array.isArray(profile?.skins)
+      ? profile.skins
+        .slice()
+        .sort((a, b) => Number(b?.state === 'ACTIVE') - Number(a?.state === 'ACTIVE'))
+        .map((skin) => skin?.url)
+      : [])
+  ];
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(String(candidate || ''));
+      if (['http:', 'https:'].includes(url.protocol) && url.hostname.toLowerCase() === 'textures.minecraft.net') {
+        url.protocol = 'https:';
+        return url.toString();
+      }
+    } catch {
+      // Переходим к следующему варианту скина.
+    }
+  }
+  return '';
+}
+
+function drawAvatarFallback() {
+  const canvas = elements.microsoftAvatar;
+  const context = canvas.getContext('2d');
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#15200f';
+  context.font = '900 10px Segoe UI, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText('M', 8, 8.5);
+}
+
+function renderMicrosoftAvatar(profile) {
+  const requestId = ++avatarRequestId;
+  const skinUrl = safeSkinUrl(profile);
+  if (!skinUrl) {
+    drawAvatarFallback();
+    return;
+  }
+
+  const image = new Image();
+  image.decoding = 'async';
+  image.onload = () => {
+    if (requestId !== avatarRequestId) return;
+    const canvas = elements.microsoftAvatar;
+    const context = canvas.getContext('2d');
+    context.imageSmoothingEnabled = false;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 8, 8, 8, 8, 0, 0, 16, 16);
+    if (image.naturalWidth >= 64 && image.naturalHeight >= 16) {
+      context.drawImage(image, 40, 8, 8, 8, 0, 0, 16, 16);
+    }
+  };
+  image.onerror = () => {
+    if (requestId === avatarRequestId) drawAvatarFallback();
+  };
+  image.src = skinUrl;
+}
+
 function setBusy(value, operation = '', failed = false, message = '') {
   busy = value;
   elements.playButton.disabled = value;
@@ -85,6 +168,8 @@ function setBusy(value, operation = '', failed = false, message = '') {
     setStatus(operation || 'Выполняется операция…', 'busy');
   } else if (failed) {
     setStatus(message || 'Операция завершилась с ошибкой', 'error');
+  } else if (gameActive) {
+    setStatus('Minecraft запускается', 'busy');
   } else {
     setStatus('Готов к запуску');
   }
@@ -108,6 +193,7 @@ function setAuthMode(mode, persist = false) {
 function renderAuth(auth) {
   const profile = auth?.profile;
   if (auth?.authenticated && profile) {
+    renderMicrosoftAvatar(profile);
     elements.microsoftName.textContent = profile.name;
     elements.microsoftCaption.textContent = `UUID ${profile.id.slice(0, 8)}…${profile.id.slice(-4)}`;
     elements.microsoftLogin.textContent = 'Обновить вход';
@@ -115,6 +201,7 @@ function renderAuth(auth) {
     elements.deviceModal.classList.add('hidden');
   } else {
     const previous = state?.settings?.lastMicrosoftProfile;
+    renderMicrosoftAvatar(previous);
     elements.microsoftName.textContent = previous?.name || 'Аккаунт не подключён';
     elements.microsoftCaption.textContent = previous
       ? 'Сессия будет восстановлена при запуске'
@@ -131,7 +218,11 @@ function renderPackInfo(pack) {
   elements.packNews.textContent = pack.news || 'Сборка обновлена и готова к запуску.';
   elements.minecraftTag.textContent = `Minecraft ${pack.minecraftVersion || state.settings.minecraftVersion}`;
   elements.neoForgeTag.textContent = `NeoForge ${pack.neoForgeVersion || state.settings.neoForgeVersion}`;
-  if (Number.isFinite(pack.fileCount)) elements.filesTag.textContent = `${pack.fileCount} управляемых файлов`;
+  if (Number.isFinite(pack.modCount)) {
+    elements.filesTag.textContent = `${pack.modCount} ${russianModLabel(pack.modCount)}`;
+  } else if (Number.isFinite(pack.fileCount)) {
+    elements.filesTag.textContent = `${pack.fileCount} управляемых файлов`;
+  }
   if (pack.serverAddress) elements.serverCaption.textContent = pack.serverAddress;
 }
 
@@ -283,6 +374,9 @@ async function initialize() {
   elements.appVersion.textContent = `v${state.appVersion}`;
   hydrateSettings(state.settings);
   renderAuth(state.auth);
+  if (Number.isFinite(state.modCount)) {
+    elements.filesTag.textContent = `${state.modCount} ${russianModLabel(state.modCount)}`;
+  }
   if (state.runtime.installed) {
     elements.progressDetail.textContent = `Установлены Minecraft ${state.runtime.minecraftVersion} и NeoForge ${state.runtime.neoForgeVersion}`;
   }
@@ -378,19 +472,38 @@ window.launcher.onAuthState((auth) => {
 });
 window.launcher.onGameState((gameState) => {
   if (gameState.state === 'started') {
+    gameExitWasCrash = false;
+    gameActive = true;
     setStatus('Minecraft запускается', 'busy');
+    elements.progressTitle.textContent = 'Minecraft запускается…';
+    elements.progressDetail.textContent = `Процесс запущен, PID ${gameState.pid}`;
     appendLog(`[launcher] Процесс Minecraft запущен, PID ${gameState.pid}.\n`);
   } else if (gameState.state === 'window-ready') {
     setStatus('Minecraft запущен');
+    setProgressComplete('Minecraft запущен', 'Игра работает. Лаунчер ожидает её завершения.');
   } else if (gameState.state === 'closed') {
-    setStatus(`Minecraft завершён · код ${gameState.code ?? '?'}`);
+    gameActive = false;
+    if (gameExitWasCrash) {
+      setStatus('Minecraft завершился с ошибкой', 'error');
+    } else {
+      setStatus(`Minecraft завершён · код ${gameState.code ?? '?'}`);
+      setProgressComplete('Всё готово', `Minecraft завершён с кодом ${gameState.code ?? '?'}.`);
+    }
     appendLog(`[launcher] Minecraft завершён с кодом ${gameState.code ?? '?'}.\n`);
-  } else if (gameState.state === 'minecraft-exit' && gameState.crashReport) {
-    showToast(`Игра завершилась с ошибкой. Краш-репорт: ${gameState.crashReportLocation || 'см. журнал'}`, 'error', 10000);
+    gameExitWasCrash = false;
+  } else if (gameState.state === 'minecraft-exit') {
+    if (gameState.crashReport) {
+      gameExitWasCrash = true;
+      setProgressComplete('Игра завершилась с ошибкой', gameState.crashReportLocation || 'Подробности находятся в журнале.');
+      showToast(`Игра завершилась с ошибкой. Краш-репорт: ${gameState.crashReportLocation || 'см. журнал'}`, 'error', 10000);
+    }
   } else if (gameState.state === 'error') {
+    gameActive = false;
+    setProgressComplete('Не удалось запустить Minecraft', gameState.message || 'Подробности находятся в журнале.');
     showToast(gameState.message || 'Не удалось запустить Minecraft.', 'error');
   }
 });
 window.launcher.onUpdateState(({ type, data }) => showUpdate(type, data));
 
+drawAvatarFallback();
 initialize().catch(() => {});
