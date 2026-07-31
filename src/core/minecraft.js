@@ -4,21 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { Version, launch, createMinecraftProcessWatcher } = require('@xmcl/core');
-const {
-  getVersionList,
-  install,
-  installDependencies,
-  installNeoForged,
-  fetchJavaRuntimeManifest,
-  installJavaRuntimeTask
-} = require('@xmcl/installer');
 const { writeJsonAtomic } = require('./settings');
-
-const METADATA_TIMEOUT_MS = 45 * 1000;
-const JAVA_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
-const GAME_INSTALL_TIMEOUT_MS = 20 * 60 * 1000;
-const NEOFORGE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
-const DEPENDENCIES_TIMEOUT_MS = 20 * 60 * 1000;
 
 function emit(onProgress, phase, message, extra = {}) {
   onProgress?.({ phase, message, ...extra });
@@ -41,7 +27,7 @@ function withTimeout(operation, milliseconds, label) {
 
 async function retryNetworkOperation(label, operation, {
   attempts = 3,
-  timeoutMs = METADATA_TIMEOUT_MS,
+  timeoutMs = 45 * 1000,
   onProgress
 } = {}) {
   const failures = [];
@@ -140,75 +126,9 @@ function managedJavaPaths(runtimeDirectory) {
   return { installer: java, launcher: java };
 }
 
-async function findExistingJava({ component, runtimeRoot, customJavaPath }) {
-  if (customJavaPath) {
-    const java = path.resolve(customJavaPath);
-    if (!(await isFile(java))) throw new Error(`Java не найдена: ${java}`);
-    const version = await runJavaVersion(java);
-    if (version.major < 21) {
-      throw new Error(`Для Minecraft 1.21.1 нужна Java 21 или новее, а выбрана Java ${version.major}.`);
-    }
-    return { installer: java, launcher: java, managed: false, major: version.major };
-  }
-
-  const target = component || 'java-runtime-delta';
-  const runtimeDirectory = path.join(runtimeRoot, target);
-  const paths = managedJavaPaths(runtimeDirectory);
-  if (!(await isFile(paths.installer))) return null;
-
-  try {
-    const version = await runJavaVersion(paths.installer);
-    if (version.major < 21) return null;
-    if (!(await isFile(paths.launcher))) paths.launcher = paths.installer;
-    return { ...paths, managed: true, major: version.major };
-  } catch {
-    return null;
-  }
-}
-
-async function ensureJava({ component, runtimeRoot, customJavaPath, onProgress }) {
-  const existing = await findExistingJava({ component, runtimeRoot, customJavaPath });
-  if (existing) return existing;
-
-  const target = component || 'java-runtime-delta';
-  const runtimeDirectory = path.join(runtimeRoot, target);
-  const paths = managedJavaPaths(runtimeDirectory);
-
-  emit(onProgress, 'java', 'Получаю сведения о Java 21…', { indeterminate: true });
-  const manifest = await retryNetworkOperation(
-    'Получение манифеста Java',
-    () => fetchJavaRuntimeManifest({ target }),
-    { onProgress }
-  );
-
-  emit(onProgress, 'java', 'Устанавливаю Java 21…', { indeterminate: true });
-  await withTimeout(
-    () => installJavaRuntimeTask({
-      destination: runtimeDirectory,
-      manifest
-    }).startAndWait(),
-    JAVA_INSTALL_TIMEOUT_MS,
-    'Установка Java 21'
-  );
-
-  const version = await runJavaVersion(paths.installer);
-  if (version.major < 21) throw new Error(`Автоматически установилась неподходящая Java ${version.major}.`);
-  if (!(await isFile(paths.launcher))) paths.launcher = paths.installer;
-  return { ...paths, managed: true, major: version.major };
-}
-
 async function readJson(file) {
   try {
     return JSON.parse(await fs.readFile(file, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-async function parseInstalledVersion(gameDirectory, versionId) {
-  if (!versionId) return null;
-  try {
-    return await Version.parse(gameDirectory, versionId);
   } catch {
     return null;
   }
@@ -221,15 +141,81 @@ function runtimeStatePath(gameDirectory) {
 function matchesRuntimeState(runtimeState, minecraftVersion, neoForgeVersion) {
   return Boolean(
     runtimeState
+    && runtimeState.schemaVersion === 2
     && runtimeState.minecraftVersion === minecraftVersion
     && runtimeState.neoForgeVersion === neoForgeVersion
     && runtimeState.versionId
+    && runtimeState.javaExecutable
   );
+}
+
+async function parseInstalledVersion(gameDirectory, versionId) {
+  if (!versionId) return null;
+  try {
+    return await Version.parse(gameDirectory, versionId);
+  } catch {
+    return null;
+  }
+}
+
+async function verifyRequiredFiles(gameDirectory, requiredFiles = []) {
+  for (const relative of requiredFiles) {
+    const safe = String(relative || '').replaceAll('\\', '/');
+    if (!safe || safe.startsWith('/') || safe.includes('..') || /^[A-Za-z]:/.test(safe)) {
+      throw new Error(`В состоянии runtime указан недопустимый путь: ${relative}`);
+    }
+    const target = path.resolve(gameDirectory, ...safe.split('/'));
+    const root = path.resolve(gameDirectory);
+    if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`В состоянии runtime указан путь за пределами игровой папки: ${relative}`);
+    }
+    if (!(await isFile(target))) {
+      throw new Error(`Базовая игровая среда повреждена: отсутствует ${safe}.`);
+    }
+  }
+}
+
+async function findExistingJava({
+  gameDirectory,
+  customJavaPath,
+  javaExecutable = 'java/bin/javaw.exe',
+  javaConsoleExecutable = 'java/bin/java.exe'
+}) {
+  if (customJavaPath) {
+    const java = path.resolve(customJavaPath);
+    if (!(await isFile(java))) throw new Error(`Java не найдена: ${java}`);
+    const version = await runJavaVersion(java);
+    if (version.major < 21) {
+      throw new Error(`Для Minecraft 1.21.1 нужна Java 21 или новее, а выбрана Java ${version.major}.`);
+    }
+    return { installer: java, launcher: java, managed: false, major: version.major };
+  }
+
+  const launcher = path.join(gameDirectory, ...String(javaExecutable).replaceAll('\\', '/').split('/'));
+  const installerCandidate = path.join(
+    gameDirectory,
+    ...String(javaConsoleExecutable).replaceAll('\\', '/').split('/')
+  );
+  const installer = await isFile(installerCandidate) ? installerCandidate : launcher;
+  if (!(await isFile(launcher)) || !(await isFile(installer))) return null;
+
+  const version = await runJavaVersion(installer);
+  if (version.major < 21) {
+    throw new Error(`В базовом runtime находится неподходящая Java ${version.major}.`);
+  }
+  return { installer, launcher, managed: true, major: version.major };
+}
+
+async function ensureJava(options) {
+  const java = await findExistingJava(options);
+  if (!java) {
+    throw new Error('Java 21 отсутствует в локальном runtime. Повтори проверку файлов для переустановки базовой среды.');
+  }
+  return java;
 }
 
 async function loadInstalledRuntime({
   gameDirectory,
-  runtimeRoot,
   minecraftVersion,
   neoForgeVersion,
   customJavaPath,
@@ -238,28 +224,32 @@ async function loadInstalledRuntime({
   const runtimeState = await readJson(runtimeStatePath(gameDirectory));
   if (!matchesRuntimeState(runtimeState, minecraftVersion, neoForgeVersion)) return null;
 
-  emit(onProgress, 'runtime', 'Проверяю уже установленную игровую среду…', { indeterminate: true });
+  emit(onProgress, 'runtime', 'Проверяю локальные Minecraft, NeoForge и Java…', { indeterminate: true });
+  await verifyRequiredFiles(gameDirectory, runtimeState.requiredFiles || []);
   const resolved = await parseInstalledVersion(gameDirectory, runtimeState.versionId);
-  if (!resolved) return null;
+  if (!resolved) {
+    throw new Error(`Не удалось прочитать локальный профиль ${runtimeState.versionId}.`);
+  }
 
-  const java = await findExistingJava({
-    component: runtimeState.javaComponent || 'java-runtime-delta',
-    runtimeRoot,
-    customJavaPath
+  const java = await ensureJava({
+    gameDirectory,
+    customJavaPath,
+    javaExecutable: runtimeState.javaExecutable,
+    javaConsoleExecutable: runtimeState.javaConsoleExecutable
   });
-  if (!java) return null;
 
   return {
     versionId: runtimeState.versionId,
     resolved,
     java,
-    reused: true
+    reused: true,
+    runtimeVersion: runtimeState.runtimeVersion || '',
+    runtimeRevision: Number(runtimeState.runtimeRevision || 0)
   };
 }
 
 async function ensureMinecraft({
   gameDirectory,
-  runtimeRoot,
   minecraftVersion,
   neoForgeVersion,
   customJavaPath,
@@ -267,145 +257,36 @@ async function ensureMinecraft({
   force = false
 }) {
   await fs.mkdir(gameDirectory, { recursive: true });
-
   const installed = await loadInstalledRuntime({
     gameDirectory,
-    runtimeRoot,
     minecraftVersion,
     neoForgeVersion,
     customJavaPath,
     onProgress
   });
-  if (installed && !force) {
-    emit(onProgress, 'runtime-ready', 'Использую уже установленный Minecraft и NeoForge.', {
-      current: 1,
-      total: 1,
-      reused: true
-    });
-    return installed;
-  }
-  if (installed && force) {
-    emit(onProgress, 'dependencies', 'Проверяю библиотеки и ресурсы установленной игры…', { indeterminate: true });
-    const resolved = await retryNetworkOperation(
-      'Проверка библиотек и ресурсов Minecraft',
-      async () => {
-        await removeZeroByteFiles(path.join(gameDirectory, 'assets', 'objects'));
-        return installDependencies(installed.resolved, {
-          side: 'client',
-          assetsDownloadConcurrency: 4,
-          librariesDownloadConcurrency: 4
-        });
-      },
-      { attempts: 3, timeoutMs: DEPENDENCIES_TIMEOUT_MS, onProgress }
+  if (!installed) {
+    throw new Error(
+      'Локальный runtime Minecraft и NeoForge не установлен. '
+      + 'Лаунчер не будет загружать игру с серверов Mojang; повтори проверку файлов для установки runtime с GitHub.'
     );
+  }
+
+  if (force) {
     const stateFile = runtimeStatePath(gameDirectory);
     const state = await readJson(stateFile) || {};
     await writeJsonAtomic(stateFile, {
       ...state,
-      schemaVersion: 1,
-      minecraftVersion,
-      neoForgeVersion,
-      versionId: installed.versionId,
       verifiedAt: new Date().toISOString()
     });
-    emit(onProgress, 'runtime-ready', 'Установленная игровая среда проверена.', {
-      current: 1,
-      total: 1,
-      reused: true,
-      verified: true
-    });
-    return { ...installed, resolved, reused: true, verified: true };
   }
 
-  emit(onProgress, 'recovery', 'Локальная игровая среда неполна. Запускаю восстановление…', {
-    indeterminate: true
+  emit(onProgress, 'runtime-ready', 'Локальные Minecraft, NeoForge и Java готовы.', {
+    current: 1,
+    total: 1,
+    reused: true,
+    verified: Boolean(force)
   });
-
-  const stateFile = runtimeStatePath(gameDirectory);
-  const runtimeState = await readJson(stateFile);
-
-  emit(onProgress, 'minecraft', `Получаю сведения о Minecraft ${minecraftVersion}…`, { indeterminate: true });
-  const versionList = await retryNetworkOperation(
-    'Получение официального манифеста Minecraft',
-    () => getVersionList(),
-    { onProgress }
-  );
-  const versionMeta = versionList.versions.find((entry) => entry.id === minecraftVersion);
-  if (!versionMeta) throw new Error(`Minecraft ${minecraftVersion} отсутствует в официальном манифесте Mojang.`);
-
-  emit(onProgress, 'minecraft', `Устанавливаю и проверяю Minecraft ${minecraftVersion}…`, {
-    indeterminate: true
-  });
-  const baseVersion = await retryNetworkOperation(
-    `Установка Minecraft ${minecraftVersion}`,
-    async () => {
-      const removed = await removeZeroByteFiles(path.join(gameDirectory, 'assets', 'objects'));
-      if (removed > 0) {
-        emit(onProgress, 'recovery', `Удалено пустых повреждённых ресурсов: ${removed}.`, { indeterminate: true });
-      }
-      return install(versionMeta, gameDirectory, {
-        side: 'client',
-        assetsDownloadConcurrency: 4,
-        librariesDownloadConcurrency: 4
-      });
-    },
-    { attempts: 3, timeoutMs: GAME_INSTALL_TIMEOUT_MS, onProgress }
-  );
-
-  const javaComponent = baseVersion.javaVersion?.component
-    || runtimeState?.javaComponent
-    || 'java-runtime-delta';
-  const java = await ensureJava({
-    component: javaComponent,
-    runtimeRoot,
-    customJavaPath,
-    onProgress
-  });
-
-  let versionId = matchesRuntimeState(runtimeState, minecraftVersion, neoForgeVersion)
-    ? runtimeState.versionId
-    : '';
-  let resolved = await parseInstalledVersion(gameDirectory, versionId);
-
-  if (!resolved) {
-    emit(onProgress, 'neoforge', `Устанавливаю NeoForge ${neoForgeVersion}…`, { indeterminate: true });
-    versionId = await retryNetworkOperation(
-      `Установка NeoForge ${neoForgeVersion}`,
-      () => installNeoForged('neoforge', neoForgeVersion, gameDirectory, {
-        side: 'client',
-        java: java.installer,
-        librariesDownloadConcurrency: 4
-      }),
-      { attempts: 3, timeoutMs: NEOFORGE_INSTALL_TIMEOUT_MS, onProgress }
-    );
-    resolved = await Version.parse(gameDirectory, versionId);
-  }
-
-  emit(onProgress, 'dependencies', 'Проверяю библиотеки и ресурсы игры…', { indeterminate: true });
-  resolved = await retryNetworkOperation(
-    'Проверка библиотек и ресурсов Minecraft',
-    async () => {
-      await removeZeroByteFiles(path.join(gameDirectory, 'assets', 'objects'));
-      return installDependencies(resolved, {
-        side: 'client',
-        assetsDownloadConcurrency: 4,
-        librariesDownloadConcurrency: 4
-      });
-    },
-    { attempts: 3, timeoutMs: DEPENDENCIES_TIMEOUT_MS, onProgress }
-  );
-
-  await writeJsonAtomic(stateFile, {
-    schemaVersion: 1,
-    minecraftVersion,
-    neoForgeVersion,
-    versionId,
-    javaComponent,
-    verifiedAt: new Date().toISOString()
-  });
-
-  emit(onProgress, 'runtime-ready', 'Minecraft и NeoForge готовы.', { current: 1, total: 1 });
-  return { versionId, resolved, java, reused: false };
+  return { ...installed, verified: Boolean(force) };
 }
 
 function parseServerAddress(value) {
@@ -450,8 +331,8 @@ async function launchMinecraft({
     accessToken: session.accessToken,
     userType: session.userType,
     properties: {},
-    launcherName: 'TechAdventureLauncher',
-    launcherBrand: 'tech-adventure',
+    launcherName: 'DekodevRebornLauncher',
+    launcherBrand: 'dekodev-reborn',
     minMemory: minMemoryMb,
     maxMemory: maxMemoryMb,
     server: server || undefined,
@@ -480,13 +361,21 @@ async function launchMinecraft({
 
 async function inspectRuntimeState(gameDirectory) {
   const state = await readJson(runtimeStatePath(gameDirectory));
-  if (!state) return { installed: false };
+  if (!state || state.schemaVersion !== 2) return { installed: false };
   const parsed = await parseInstalledVersion(gameDirectory, state.versionId);
+  let requiredFilesPresent = true;
+  try {
+    await verifyRequiredFiles(gameDirectory, state.requiredFiles || []);
+  } catch {
+    requiredFilesPresent = false;
+  }
   return {
-    installed: Boolean(parsed),
+    installed: Boolean(parsed) && requiredFilesPresent,
     minecraftVersion: state.minecraftVersion || '',
     neoForgeVersion: state.neoForgeVersion || '',
-    versionId: state.versionId || ''
+    versionId: state.versionId || '',
+    runtimeVersion: state.runtimeVersion || '',
+    runtimeRevision: Number(state.runtimeRevision || 0)
   };
 }
 
@@ -504,5 +393,7 @@ module.exports = {
   inspectRuntimeState,
   withTimeout,
   retryNetworkOperation,
-  removeZeroByteFiles
+  removeZeroByteFiles,
+  verifyRequiredFiles,
+  runtimeStatePath
 };

@@ -181,23 +181,17 @@ async function preparePack(forcePackCheck) {
     throw new Error('Сначала укажи GitHub-ссылку на манифест сборки в настройках лаунчера.');
   }
   if (!settings.runtimeManifestUrl) {
-    throw new Error('В настройках отсутствует ссылка на runtime-manifest.json.');
+    throw new Error('В настройках отсутствует ссылка на runtime-manifest-v2.json.');
   }
 
-  const existingRuntime = await inspectRuntimeState(settings.gameDirectory);
-  const existingMatches = existingRuntime.installed
-    && existingRuntime.minecraftVersion === settings.minecraftVersion
-    && existingRuntime.neoForgeVersion === settings.neoForgeVersion;
-  if (!existingMatches) {
-    const bootstrap = await ensureRuntimeBootstrap({
-      runtimeManifestUrl: settings.runtimeManifestUrl,
-      gameDirectory: settings.gameDirectory,
-      expectedMinecraftVersion: settings.minecraftVersion,
-      expectedNeoForgeVersion: settings.neoForgeVersion,
-      onProgress: progressSink
-    });
-    if (bootstrap.warning) send('launcher:warning', { message: bootstrap.warning });
-  }
+  const initialBootstrap = await ensureRuntimeBootstrap({
+    runtimeManifestUrl: settings.runtimeManifestUrl,
+    gameDirectory: settings.gameDirectory,
+    expectedMinecraftVersion: settings.minecraftVersion,
+    expectedNeoForgeVersion: settings.neoForgeVersion,
+    onProgress: progressSink
+  });
+  if (initialBootstrap.warning) send('launcher:warning', { message: initialBootstrap.warning });
 
   const syncResult = await syncPack({
     manifestUrl: settings.manifestUrl,
@@ -237,7 +231,6 @@ async function preparePack(forcePackCheck) {
 
   currentRuntime = await ensureMinecraft({
     gameDirectory: effective.gameDirectory,
-    runtimeRoot: path.join(app.getPath('userData'), 'runtime'),
     minecraftVersion: effective.minecraftVersion,
     neoForgeVersion: effective.neoForgeVersion,
     customJavaPath: effective.customJavaPath,
@@ -462,7 +455,7 @@ app.whenReady().then(async () => {
   scheduleUpdateChecks();
 }).catch(async (error) => {
   await appendLauncherLog(`[launcher:start] ${errorDetails(error)}\n`);
-  dialog.showErrorBox('Tech Adventure Launcher', errorMessage(error));
+  dialog.showErrorBox('Dekodev Reborn Launcher', errorMessage(error));
   app.quit();
 });
 

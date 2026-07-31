@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   matchesRuntimeState,
   parseServerAddress,
@@ -18,9 +20,11 @@ test('адрес сервера разбирается без запуска и�
 
 test('готовая среда переиспользуется только при точном совпадении версий', () => {
   const state = {
+    schemaVersion: 2,
     minecraftVersion: '1.21.1',
     neoForgeVersion: '21.1.235',
-    versionId: 'neoforge-21.1.235'
+    versionId: 'neoforge-21.1.235',
+    javaExecutable: 'java/bin/javaw.exe'
   };
 
   assert.equal(matchesRuntimeState(state, '1.21.1', '21.1.235'), true);
@@ -48,4 +52,9 @@ test('сетевой запрос повторяется и затем возв�
 
   assert.equal(result, 'ok');
   assert.equal(attempts, 3);
+});
+
+test('игровая среда не содержит официального сетевого установщика', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'minecraft.js'), 'utf8');
+  assert.doesNotMatch(source, /@xmcl\/installer|getVersionList|installNeoForged|fetchJavaRuntimeManifest|installJavaRuntimeTask/);
 });

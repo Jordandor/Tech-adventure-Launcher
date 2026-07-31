@@ -1,13 +1,13 @@
-# Tech Adventure Launcher
+# Dekodev Reborn Launcher
 
-Windows-лаунчер сборки Minecraft 1.21.1 на NeoForge.
+Windows-лаунчер сообщества Dekodev Reborn. Текущая сборка и сервер — Tech Adventure на Minecraft 1.21.1 с NeoForge.
 
 ## Возможности
 
 - официальный вход Microsoft через браузер;
 - запуск по нику без регистрации;
 - однократная установка базовой среды Minecraft 1.21.1 + NeoForge 21.1.235 из отдельного GitHub Release;
-- автоматическая установка Java 21 при отсутствии подходящей Java;
+- Java 21 включена в проверенный runtime и не загружается с серверов Mojang;
 - выборочное обновление сборки с GitHub Releases;
 - проверка размеров и SHA-256 каждого файла и пакета;
 - восстановление повреждённых файлов;
@@ -22,11 +22,11 @@ Windows-лаунчер сборки Minecraft 1.21.1 на NeoForge.
 
 ## Базовая игровая среда
 
-При первой установке лаунчер получает `runtime-manifest.json`, скачивает один проверенный ZIP из `Jordandor/Tech-adventure-Runtime`, проверяет SHA-256 и устанавливает общие каталоги `assets` и `libraries`. Метаданные исходной среды PrismLauncher сохраняются внутри `.tech-adventure-launcher/prism-runtime` и не смешиваются с файлами сборки.
+При первой установке лаунчер получает `runtime-manifest-v2.json`, скачивает один проверенный ZIP из `Jordandor/Tech-adventure-Runtime`, проверяет SHA-256 и устанавливает каталоги `assets`, `libraries`, `versions` и `java`.
 
-После успешной установки записывается `bootstrap-state.json`. Обычные обновления модов не скачивают runtime повторно: меняются только пакеты сборки. Новый runtime потребуется лишь при смене Minecraft, NeoForge или `runtimeRevision`.
+Runtime подготовлен в стандартном формате Minecraft Launcher и уже содержит Minecraft 1.21.1, профиль NeoForge 21.1.235 и Java 21 для Windows x64. Лаунчер не обращается к серверам Mojang, NeoForge Maven или манифесту Java для установки игровой среды.
 
-После распаковки лаунчер создаёт собственный стандартный профиль запуска через `@xmcl`. Уже загруженные ресурсы и библиотеки используются повторно; пустые повреждённые файлы удаляются, а недостающие служебные файлы запрашиваются с ограниченной параллельностью и тремя попытками.
+После успешной установки записываются `bootstrap-state.json` и `runtime-state.json`. Обычные обновления модов не скачивают runtime повторно: меняются только пакеты сборки. Новый runtime потребуется лишь при смене Minecraft, NeoForge, Java или `runtimeRevision`.
 
 ## Схема обновления сборки
 
@@ -55,7 +55,7 @@ Windows-лаунчер сборки Minecraft 1.21.1 на NeoForge.
 
 Используются три публичных репозитория:
 
-- `Jordandor/Tech-adventure-Runtime` — базовая среда и `runtime-manifest.json`;
+- `Jordandor/Tech-adventure-Runtime` — базовая среда и `runtime-manifest-v2.json`;
 - `Jordandor/Tech-adventure` — `pack-manifest.json` и пакеты сборки;
 - `Jordandor/Tech-adventure-Launcher` — исходники и релизы самого лаунчера.
 
@@ -72,7 +72,7 @@ Windows-лаунчер сборки Minecraft 1.21.1 на NeoForge.
 - `.blockmap` для дифференциальной загрузки обновлений;
 - при необходимости portable `.exe`.
 
-Workflow `.github/workflows/build.yml` автоматически проверяет и собирает приложение. Тег вида `v0.2.2` создаёт GitHub Release с файлами обновления.
+Workflow `.github/workflows/build.yml` автоматически проверяет и собирает приложение. Тег вида `v0.2.3` создаёт GitHub Release с файлами обновления.
 
 ## Разработка
 
@@ -144,7 +144,7 @@ npm run manifest -- `
 src/main.js                 основной процесс Electron и автообновление
 src/core/auth.js            Microsoft-вход и защищённый кеш
 src/core/runtime-bootstrap.js  загрузка и установка базовой среды
-src/core/minecraft.js          Java, стандартный профиль Minecraft/NeoForge и запуск
+src/core/minecraft.js          проверка локальных Minecraft/NeoForge/Java и запуск
 src/core/synchronizer.js    пакетное обновление сборки
 src/core/manifest.js        проверка манифеста, URL и безопасных путей
 src/renderer/               интерфейс

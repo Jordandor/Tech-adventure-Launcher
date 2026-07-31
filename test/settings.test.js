@@ -16,7 +16,7 @@ const defaults = {
   minecraftVersion: '1.21.1',
   neoForgeVersion: '21.1.235',
   manifestUrl: 'https://raw.githubusercontent.com/Jordandor/Tech-adventure/main/pack-manifest.json',
-  runtimeManifestUrl: 'https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest.json',
+  runtimeManifestUrl: 'https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest-v2.json',
   serverAddress: '',
   minMemoryMb: 4096,
   maxMemoryMb: 8192,
@@ -95,6 +95,15 @@ test('устаревшая версия NeoForge мигрирует на 21.1.23
   assert.equal(Object.hasOwn(migrated, 'manifestUrl'), false);
   assert.equal(Object.hasOwn(migrated, 'runtimeManifestUrl'), false);
   assert.equal(Object.hasOwn(migrated, 'updateRepository'), false);
+});
+
+
+test('старый Prism runtime-манифест мигрирует на стандартный runtime v2', () => {
+  const migrated = migrateSavedSettings({
+    runtimeManifestUrl: 'https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest.json'
+  }, defaults);
+
+  assert.equal(migrated.runtimeManifestUrl, defaults.runtimeManifestUrl);
 });
 
 test('SettingsStore сохраняет миграцию старых настроек', async (t) => {

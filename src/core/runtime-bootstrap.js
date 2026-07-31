@@ -9,13 +9,12 @@ const { pipeline } = require('node:stream/promises');
 const yauzl = require('yauzl');
 const { writeJsonAtomic } = require('./settings');
 
-const USER_AGENT = 'Tech-Adventure-Launcher/0.2.2';
+const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.3';
 const DOWNLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const MAX_ZIP_ENTRIES = 200000;
 const MAX_UNCOMPRESSED_BYTES = 6 * 1024 * 1024 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
-const REQUIRED_ROOTS = new Set(['assets', 'libraries', 'meta']);
-const REQUIRED_FILE = 'mmc-pack.json';
+const REQUIRED_ROOTS = new Set(['assets', 'libraries', 'versions', 'java']);
 
 function emit(onProgress, phase, message, extra = {}) {
   onProgress?.({ phase, message, ...extra });
@@ -50,27 +49,53 @@ function validateGithubUrl(value, label) {
   return url.toString();
 }
 
-function normalizeComponent(raw, index) {
-  if (!raw || typeof raw !== 'object') throw new Error(`Некорректный requiredComponents[${index}].`);
-  const uid = String(raw.uid || '').trim();
-  const version = String(raw.version || '').trim();
-  if (!uid || !version) throw new Error(`Некорректный requiredComponents[${index}].`);
-  return { uid, version };
+function normalizeRelativePath(value, label) {
+  const slashPath = String(value || '').replaceAll('\\', '/').replace(/^\.\//, '');
+  if (!slashPath || slashPath.includes('\0') || slashPath.startsWith('/') || /^[A-Za-z]:/.test(slashPath)) {
+    throw new Error(`${label}: указан недопустимый путь.`);
+  }
+  const segments = slashPath.split('/').filter(Boolean);
+  if (!segments.length || segments.includes('..') || segments.some((segment) => segment === '.')) {
+    throw new Error(`${label}: указан недопустимый путь.`);
+  }
+  const normalized = segments.join('/');
+  if (!REQUIRED_ROOTS.has(segments[0].toLowerCase())) {
+    throw new Error(`${label}: путь должен находиться внутри assets, libraries, versions или java.`);
+  }
+  return normalized;
 }
 
 function validateRuntimeManifest(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Манифест runtime должен быть JSON-объектом.');
   }
-  if (raw.schemaVersion !== 1) {
+  if (raw.schemaVersion !== 2) {
     throw new Error(`Неподдерживаемая версия runtime-манифеста: ${raw.schemaVersion ?? 'не указана'}.`);
   }
+
   const runtimeVersion = String(raw.runtimeVersion || '').trim();
   const minecraftVersion = String(raw.minecraftVersion || '').trim();
   const neoForgeVersion = String(raw.neoForgeVersion || '').trim();
-  if (!runtimeVersion || !minecraftVersion || !neoForgeVersion) {
-    throw new Error('В runtime-манифесте не указаны версии runtime, Minecraft или NeoForge.');
+  const versionId = String(raw.versionId || '').trim();
+  const baseVersionId = String(raw.baseVersionId || '').trim();
+  const sourceFormat = String(raw.sourceFormat || '').trim();
+  const platform = String(raw.platform || '').trim();
+  if (!runtimeVersion || !minecraftVersion || !neoForgeVersion || !versionId || !baseVersionId) {
+    throw new Error('В runtime-манифесте не указаны версии runtime, Minecraft, NeoForge или ID профилей.');
   }
+  if (sourceFormat !== 'standard-minecraft-launcher') {
+    throw new Error(`Неподдерживаемый формат runtime: ${sourceFormat || 'не указан'}.`);
+  }
+  if (platform !== 'windows-x64') {
+    throw new Error(`Неподдерживаемая платформа runtime: ${platform || 'не указана'}.`);
+  }
+  if (versionId !== `neoforge-${neoForgeVersion}`) {
+    throw new Error('ID профиля NeoForge не соответствует указанной версии NeoForge.');
+  }
+  if (baseVersionId !== minecraftVersion) {
+    throw new Error('ID базового профиля не соответствует версии Minecraft.');
+  }
+
   const archive = raw.archive && typeof raw.archive === 'object' ? raw.archive : {};
   const sha256 = String(archive.sha256 || '').toLowerCase();
   if (!SHA256_PATTERN.test(sha256)) throw new Error('В runtime-манифесте не указан корректный SHA-256 архива.');
@@ -78,32 +103,65 @@ function validateRuntimeManifest(raw) {
   if (!fileName.toLowerCase().endsWith('.zip') || /[\\/]/.test(fileName)) {
     throw new Error('В runtime-манифесте указано некорректное имя ZIP-архива.');
   }
+
   const requiredArchiveEntries = Array.isArray(raw.requiredArchiveEntries)
-    ? raw.requiredArchiveEntries.map((entry) => String(entry || '').replaceAll('\\', '/').replace(/\/+$/, ''))
+    ? raw.requiredArchiveEntries.map((entry) => String(entry || '').replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase())
     : [];
-  for (const required of ['assets', 'libraries', 'meta', REQUIRED_FILE]) {
+  for (const required of REQUIRED_ROOTS) {
     if (!requiredArchiveEntries.includes(required)) {
-      throw new Error(`Runtime-манифест не требует обязательный элемент ${required}.`);
+      throw new Error(`Runtime-манифест не требует обязательную папку ${required}.`);
     }
   }
-  const requiredComponents = Array.isArray(raw.requiredComponents)
-    ? raw.requiredComponents.map(normalizeComponent)
+
+  const java = raw.java && typeof raw.java === 'object' ? raw.java : {};
+  const javaMajorVersion = Number(java.majorVersion);
+  if (!Number.isInteger(javaMajorVersion) || javaMajorVersion < 21) {
+    throw new Error('Runtime должен содержать Java 21 или новее.');
+  }
+  const javaExecutable = normalizeRelativePath(java.executable, 'Исполняемый файл Java');
+  const javaConsoleExecutable = normalizeRelativePath(java.consoleExecutable, 'Консольный файл Java');
+  if (!javaExecutable.toLowerCase().startsWith('java/') || !javaConsoleExecutable.toLowerCase().startsWith('java/')) {
+    throw new Error('Исполняемые файлы Java должны находиться в папке java.');
+  }
+
+  const requiredFiles = Array.isArray(raw.requiredFiles)
+    ? raw.requiredFiles.map((entry, index) => normalizeRelativePath(entry, `requiredFiles[${index}]`))
     : [];
+  if (!requiredFiles.length) throw new Error('Runtime-манифест не содержит список обязательных файлов.');
+  for (const required of [
+    `versions/${baseVersionId}/${baseVersionId}.jar`,
+    `versions/${baseVersionId}/${baseVersionId}.json`,
+    `versions/${versionId}/${versionId}.json`,
+    javaExecutable,
+    javaConsoleExecutable
+  ]) {
+    if (!requiredFiles.includes(required)) {
+      throw new Error(`Runtime-манифест не требует обязательный файл ${required}.`);
+    }
+  }
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runtimeVersion,
-    runtimeRevision: Number.isSafeInteger(Number(raw.runtimeRevision)) ? Number(raw.runtimeRevision) : 1,
-    sourceFormat: String(raw.sourceFormat || 'prismlauncher'),
+    runtimeRevision: Number.isSafeInteger(Number(raw.runtimeRevision)) ? Number(raw.runtimeRevision) : 2,
+    sourceFormat,
+    platform,
     minecraftVersion,
     neoForgeVersion,
-    lwjglVersion: String(raw.lwjglVersion || ''),
+    versionId,
+    baseVersionId,
+    java: {
+      majorVersion: javaMajorVersion,
+      executable: javaExecutable,
+      consoleExecutable: javaConsoleExecutable
+    },
     archive: {
       fileName,
       url: validateGithubUrl(archive.url, 'Архив runtime'),
       sha256
     },
-    requiredArchiveEntries,
-    requiredComponents
+    requiredArchiveEntries: [...new Set(requiredArchiveEntries)],
+    requiredFiles: [...new Set(requiredFiles)]
   };
 }
 
@@ -117,7 +175,7 @@ async function readJson(file, fallback = null) {
 
 async function fetchRuntimeManifest({ runtimeManifestUrl, metadataDirectory, onProgress }) {
   const safeUrl = validateGithubUrl(runtimeManifestUrl, 'Манифест runtime');
-  const cacheFile = path.join(metadataDirectory, 'last-runtime-manifest.json');
+  const cacheFile = path.join(metadataDirectory, 'last-runtime-manifest-v2.json');
   emit(onProgress, 'runtime-manifest', 'Получаю манифест базовой игровой среды…', { indeterminate: true });
   try {
     const response = await fetch(safeUrl, {
@@ -149,15 +207,32 @@ function bootstrapStatePath(gameDirectory) {
   return path.join(runtimeMetadataDirectory(gameDirectory), 'bootstrap-state.json');
 }
 
+function runtimeStatePath(gameDirectory) {
+  return path.join(runtimeMetadataDirectory(gameDirectory), 'runtime-state.json');
+}
+
+async function hasRequiredFiles(root, requiredFiles) {
+  for (const relative of requiredFiles) {
+    if (!(await exists(path.join(root, ...relative.split('/'))))) return false;
+  }
+  return true;
+}
+
 async function isBootstrapInstalled(gameDirectory, manifest) {
   const state = await readJson(bootstrapStatePath(gameDirectory), null);
-  if (!state || state.runtimeVersion !== manifest.runtimeVersion || state.archiveSha256 !== manifest.archive.sha256) {
+  if (
+    !state
+    || state.schemaVersion !== 2
+    || state.runtimeVersion !== manifest.runtimeVersion
+    || state.archiveSha256 !== manifest.archive.sha256
+    || state.versionId !== manifest.versionId
+  ) {
     return false;
   }
-  return (await exists(path.join(gameDirectory, 'assets')))
-    && (await exists(path.join(gameDirectory, 'libraries')))
-    && (await exists(path.join(runtimeMetadataDirectory(gameDirectory), 'prism-runtime', 'meta')))
-    && (await exists(path.join(runtimeMetadataDirectory(gameDirectory), 'prism-runtime', REQUIRED_FILE)));
+  for (const root of REQUIRED_ROOTS) {
+    if (!(await exists(path.join(gameDirectory, root)))) return false;
+  }
+  return hasRequiredFiles(gameDirectory, manifest.requiredFiles);
 }
 
 function progressTransform(onChunk) {
@@ -196,7 +271,7 @@ async function downloadArchive(manifest, destination, onProgress) {
         Readable.fromWeb(response.body),
         progressTransform((bytes) => {
           current += bytes;
-          emit(onProgress, 'runtime-download', 'Загружаю базовую игровую среду…', {
+          emit(onProgress, 'runtime-download', 'Загружаю Minecraft, NeoForge и Java с GitHub…', {
             current,
             total,
             indeterminate: total <= 0,
@@ -227,21 +302,10 @@ async function downloadArchive(manifest, destination, onProgress) {
 }
 
 function normalizeZipPath(fileName) {
-  const slashPath = String(fileName || '').replaceAll('\\', '/');
-  if (!slashPath || slashPath.includes('\0') || slashPath.startsWith('/') || /^[A-Za-z]:/.test(slashPath)) {
-    throw new Error(`Runtime-архив содержит недопустимый путь: ${fileName}`);
-  }
-  const segments = slashPath.split('/').filter(Boolean);
-  if (!segments.length || segments.includes('..') || segments.some((segment) => segment === '.')) {
-    throw new Error(`Runtime-архив содержит недопустимый путь: ${fileName}`);
-  }
-  const normalized = segments.join('/');
-  const root = segments[0].toLowerCase();
-  if (!REQUIRED_ROOTS.has(root) && normalized.toLowerCase() !== REQUIRED_FILE) {
+  const normalized = normalizeRelativePath(fileName, 'Runtime-архив');
+  const root = normalized.split('/')[0].toLowerCase();
+  if (!REQUIRED_ROOTS.has(root)) {
     throw new Error(`Runtime-архив содержит лишний элемент ${normalized}.`);
-  }
-  if (normalized.toLowerCase() === REQUIRED_FILE && segments.length !== 1) {
-    throw new Error(`${REQUIRED_FILE} должен лежать в корне runtime-архива.`);
   }
   return normalized;
 }
@@ -260,7 +324,6 @@ async function extractRuntimeArchive(archiveFile, extractionDirectory, onProgres
   let extractedBytes = 0;
   let declaredBytes = 0;
   const seenRoots = new Set();
-  let hasPack = false;
 
   const zipfile = await yauzl.openPromise(archiveFile, {
     autoClose: true,
@@ -278,10 +341,11 @@ async function extractRuntimeArchive(archiveFile, extractionDirectory, onProgres
       if (declaredBytes > MAX_UNCOMPRESSED_BYTES) throw new Error('Распакованный runtime превышает допустимый размер.');
 
       const directory = entry.fileName.endsWith('/');
-      const normalized = normalizeZipPath(directory ? entry.fileName.slice(0, -1) : entry.fileName);
+      const rawName = directory ? entry.fileName.slice(0, -1) : entry.fileName;
+      if (!rawName) continue;
+      const normalized = normalizeZipPath(rawName);
       const root = normalized.split('/')[0].toLowerCase();
-      if (REQUIRED_ROOTS.has(root)) seenRoots.add(root);
-      if (normalized.toLowerCase() === REQUIRED_FILE) hasPack = true;
+      seenRoots.add(root);
       const destination = path.resolve(extractionDirectory, ...normalized.split('/'));
       const rootPath = path.resolve(extractionDirectory);
       if (destination !== rootPath && !destination.startsWith(`${rootPath}${path.sep}`)) {
@@ -317,35 +381,45 @@ async function extractRuntimeArchive(archiveFile, extractionDirectory, onProgres
       throw new Error(`В runtime-архиве отсутствует папка ${root}.`);
     }
   }
-  if (!hasPack || !(await exists(path.join(extractionDirectory, REQUIRED_FILE)))) {
-    throw new Error(`В runtime-архиве отсутствует ${REQUIRED_FILE}.`);
-  }
-}
-
-function componentMap(pack) {
-  const result = new Map();
-  if (!pack || !Array.isArray(pack.components)) return result;
-  for (const component of pack.components) {
-    const uid = String(component?.uid || '').trim();
-    const version = String(component?.version || component?.cachedVersion || '').trim();
-    if (uid && version) result.set(uid, version);
-  }
-  return result;
 }
 
 async function validateExtractedRuntime(extractionDirectory, manifest) {
-  const pack = await readJson(path.join(extractionDirectory, REQUIRED_FILE), null);
-  const components = componentMap(pack);
-  if (components.get('net.minecraft') !== manifest.minecraftVersion) {
-    throw new Error(`Runtime содержит Minecraft ${components.get('net.minecraft') || 'неизвестной версии'}, ожидался ${manifest.minecraftVersion}.`);
-  }
-  if (components.get('net.neoforged') !== manifest.neoForgeVersion) {
-    throw new Error(`Runtime содержит NeoForge ${components.get('net.neoforged') || 'неизвестной версии'}, ожидался ${manifest.neoForgeVersion}.`);
-  }
-  for (const required of manifest.requiredComponents) {
-    if (components.get(required.uid) !== required.version) {
-      throw new Error(`Runtime-компонент ${required.uid} имеет версию ${components.get(required.uid) || 'неизвестно'}, ожидалась ${required.version}.`);
+  if (!(await hasRequiredFiles(extractionDirectory, manifest.requiredFiles))) {
+    for (const relative of manifest.requiredFiles) {
+      if (!(await exists(path.join(extractionDirectory, ...relative.split('/'))))) {
+        throw new Error(`В runtime-архиве отсутствует обязательный файл ${relative}.`);
+      }
     }
+  }
+
+  const baseVersionFile = path.join(
+    extractionDirectory,
+    'versions',
+    manifest.baseVersionId,
+    `${manifest.baseVersionId}.json`
+  );
+  const neoForgeVersionFile = path.join(
+    extractionDirectory,
+    'versions',
+    manifest.versionId,
+    `${manifest.versionId}.json`
+  );
+  const base = await readJson(baseVersionFile, null);
+  const neoForge = await readJson(neoForgeVersionFile, null);
+  if (base?.id !== manifest.baseVersionId) {
+    throw new Error(`Базовый профиль runtime имеет ID ${base?.id || 'неизвестно'}, ожидался ${manifest.baseVersionId}.`);
+  }
+  const profileJavaMajor = Number(base?.javaVersion?.majorVersion);
+  if (!Number.isInteger(profileJavaMajor) || profileJavaMajor < manifest.java.majorVersion) {
+    throw new Error(`Профиль Minecraft требует неподходящую Java ${base?.javaVersion?.majorVersion || 'неизвестно'}.`);
+  }
+  if (neoForge?.id !== manifest.versionId || neoForge?.inheritsFrom !== manifest.baseVersionId) {
+    throw new Error('Профиль NeoForge не соответствует указанным версиям Minecraft и NeoForge.');
+  }
+  const gameArguments = Array.isArray(neoForge?.arguments?.game) ? neoForge.arguments.game.map(String) : [];
+  const neoForgeFlag = gameArguments.indexOf('--fml.neoForgeVersion');
+  if (neoForgeFlag < 0 || gameArguments[neoForgeFlag + 1] !== manifest.neoForgeVersion) {
+    throw new Error('В профиле NeoForge указана другая версия загрузчика.');
   }
 }
 
@@ -364,19 +438,18 @@ async function renameWithRetry(from, to) {
   throw lastError;
 }
 
-
 async function installExtractedRuntime({ extractionDirectory, gameDirectory, manifest }) {
   const metadataDirectory = runtimeMetadataDirectory(gameDirectory);
   const backupRoot = path.join(metadataDirectory, 'runtime-backup');
-  const prismDestination = path.join(metadataDirectory, 'prism-runtime');
   const installed = [];
+  const previousBootstrapState = await readJson(bootstrapStatePath(gameDirectory), null);
+  const previousRuntimeState = await readJson(runtimeStatePath(gameDirectory), null);
 
   await fsp.rm(backupRoot, { recursive: true, force: true });
   await fsp.mkdir(backupRoot, { recursive: true });
-  await fsp.rm(prismDestination, { recursive: true, force: true });
 
   try {
-    for (const name of ['assets', 'libraries']) {
+    for (const name of REQUIRED_ROOTS) {
       const source = path.join(extractionDirectory, name);
       const destination = path.join(gameDirectory, name);
       const backup = path.join(backupRoot, name);
@@ -393,21 +466,47 @@ async function installExtractedRuntime({ extractionDirectory, gameDirectory, man
       }
     }
 
-    await fsp.mkdir(prismDestination, { recursive: true });
-    await renameWithRetry(path.join(extractionDirectory, 'meta'), path.join(prismDestination, 'meta'));
-    await renameWithRetry(path.join(extractionDirectory, REQUIRED_FILE), path.join(prismDestination, REQUIRED_FILE));
-
+    const installedAt = new Date().toISOString();
     await writeJsonAtomic(bootstrapStatePath(gameDirectory), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runtimeVersion: manifest.runtimeVersion,
       runtimeRevision: manifest.runtimeRevision,
       minecraftVersion: manifest.minecraftVersion,
       neoForgeVersion: manifest.neoForgeVersion,
+      versionId: manifest.versionId,
+      baseVersionId: manifest.baseVersionId,
       archiveSha256: manifest.archive.sha256,
-      installedAt: new Date().toISOString()
+      requiredFiles: manifest.requiredFiles,
+      installedAt
     });
+    await writeJsonAtomic(runtimeStatePath(gameDirectory), {
+      schemaVersion: 2,
+      runtimeVersion: manifest.runtimeVersion,
+      runtimeRevision: manifest.runtimeRevision,
+      minecraftVersion: manifest.minecraftVersion,
+      neoForgeVersion: manifest.neoForgeVersion,
+      versionId: manifest.versionId,
+      baseVersionId: manifest.baseVersionId,
+      javaMajorVersion: manifest.java.majorVersion,
+      javaExecutable: manifest.java.executable,
+      javaConsoleExecutable: manifest.java.consoleExecutable,
+      requiredFiles: manifest.requiredFiles,
+      archiveSha256: manifest.archive.sha256,
+      installedAt,
+      verifiedAt: installedAt
+    });
+    await fsp.rm(path.join(metadataDirectory, 'prism-runtime'), { recursive: true, force: true });
   } catch (error) {
-    await fsp.rm(prismDestination, { recursive: true, force: true });
+    if (previousBootstrapState) {
+      await writeJsonAtomic(bootstrapStatePath(gameDirectory), previousBootstrapState).catch(() => {});
+    } else {
+      await fsp.rm(bootstrapStatePath(gameDirectory), { force: true }).catch(() => {});
+    }
+    if (previousRuntimeState) {
+      await writeJsonAtomic(runtimeStatePath(gameDirectory), previousRuntimeState).catch(() => {});
+    } else {
+      await fsp.rm(runtimeStatePath(gameDirectory), { force: true }).catch(() => {});
+    }
     for (const entry of installed.reverse()) {
       await fsp.rm(entry.destination, { recursive: true, force: true });
       if (entry.hadBackup && await exists(entry.backup)) {
@@ -427,7 +526,10 @@ async function ensureRuntimeBootstrap({
   expectedNeoForgeVersion,
   onProgress
 }) {
-  if (!runtimeManifestUrl) throw new Error('Не настроена ссылка на runtime-manifest.json.');
+  if (!runtimeManifestUrl) throw new Error('Не настроена ссылка на runtime-manifest-v2.json.');
+  if (process.platform !== 'win32' || process.arch !== 'x64') {
+    throw new Error('Текущий runtime поддерживает только Windows x64.');
+  }
   await fsp.mkdir(gameDirectory, { recursive: true });
   const metadataDirectory = runtimeMetadataDirectory(gameDirectory);
   await fsp.mkdir(metadataDirectory, { recursive: true });
@@ -456,7 +558,9 @@ async function ensureRuntimeBootstrap({
     emit(onProgress, 'runtime-verify', 'SHA-256 runtime-архива проверен.', { current: 1, total: 1 });
     await extractRuntimeArchive(archiveFile, extractionDirectory, onProgress);
     await validateExtractedRuntime(extractionDirectory, manifest);
-    emit(onProgress, 'runtime-install', 'Устанавливаю базовую игровую среду…', { indeterminate: true });
+    emit(onProgress, 'runtime-install', 'Устанавливаю Minecraft, NeoForge и Java из локального архива…', {
+      indeterminate: true
+    });
     await installExtractedRuntime({ extractionDirectory, gameDirectory, manifest });
   } finally {
     await fsp.rm(transactionDirectory, { recursive: true, force: true });
@@ -472,11 +576,12 @@ async function ensureRuntimeBootstrap({
 module.exports = {
   validateRuntimeManifest,
   normalizeZipPath,
-  componentMap,
   fetchRuntimeManifest,
   extractRuntimeArchive,
   validateExtractedRuntime,
   ensureRuntimeBootstrap,
   bootstrapStatePath,
-  isBootstrapInstalled
+  runtimeStatePath,
+  isBootstrapInstalled,
+  hasRequiredFiles
 };

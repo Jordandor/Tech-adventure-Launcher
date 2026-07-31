@@ -58,6 +58,16 @@ function migrateSavedSettings(saved, defaults) {
     migrated.neoForgeVersion = defaults.neoForgeVersion;
   }
 
+  const legacyRuntimeManifestUrls = new Set([
+    'https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest.json'
+  ]);
+  if (
+    legacyRuntimeManifestUrls.has(String(migrated.runtimeManifestUrl || '').trim())
+    && defaults.runtimeManifestUrl
+  ) {
+    migrated.runtimeManifestUrl = defaults.runtimeManifestUrl;
+  }
+
   return migrated;
 }
 

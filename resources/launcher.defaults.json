@@ -11,5 +11,5 @@
   "closeLauncherOnGameStart": false,
   "autoUpdateLauncher": true,
   "updateRepository": "Jordandor/Tech-adventure-Launcher",
-  "runtimeManifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest.json"
+  "runtimeManifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest-v2.json"
 }

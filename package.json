@@ -1,15 +1,15 @@
 {
   "name": "tech-adventure-launcher",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
-  "description": "Лаунчер сборки Tech Adventure для Minecraft 1.21.1 NeoForge",
+  "description": "Лаунчер сообщества Dekodev Reborn для сервера Tech Adventure на Minecraft 1.21.1 NeoForge",
   "main": "src/main.js",
   "author": "Andrew",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/core/runtime-bootstrap.js && node --check src/renderer/app.js && node --check tools/generate-manifest.mjs && npm test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/core/runtime-bootstrap.js && node --check src/core/minecraft.js && node --check src/core/settings.js && node --check src/renderer/app.js && node --check tools/generate-manifest.mjs && npm test",
     "pack:win": "electron-builder --win portable --x64",
     "dist:win": "electron-builder --win nsis portable --x64",
     "manifest": "node tools/generate-manifest.mjs"
