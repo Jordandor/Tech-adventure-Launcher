@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "pack": {
+    "id": "tech-adventure",
+    "name": "Tech Adventure",
+    "version": "1.0.1",
+    "minecraftVersion": "1.21.1",
+    "neoForgeVersion": "21.1.247",
+    "serverAddress": "play.example.org:25565",
+    "news": "Обновлены два мода и один конфиг."
+  },
+  "packages": [
+    {
+      "id": "raw-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "format": "raw",
+      "url": "https://github.com/OWNER/REPOSITORY/releases/download/pack-v1.0.1/file-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 123456
+    },
+    {
+      "id": "zip-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "format": "zip",
+      "url": "https://github.com/OWNER/REPOSITORY/releases/download/pack-v1.0.0/bundle-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 654321
+    }
+  ],
+  "files": [
+    {
+      "path": "mods/example-mod.jar",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 123456,
+      "packageId": "raw-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy": "managed"
+    },
+    {
+      "path": "options.txt",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 12000,
+      "packageId": "zip-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "policy": "seed"
+    }
+  ]
+}

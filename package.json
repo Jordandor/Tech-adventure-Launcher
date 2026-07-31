@@ -1,0 +1,91 @@
+{
+  "name": "tech-adventure-launcher",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Лаунчер сборки Tech Adventure для Minecraft 1.21.1 NeoForge",
+  "main": "src/main.js",
+  "author": "Andrew",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/app.js && node --check tools/generate-manifest.mjs && npm test",
+    "pack:win": "electron-builder --win portable --x64",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "manifest": "node tools/generate-manifest.mjs"
+  },
+  "dependencies": {
+    "@xmcl/core": "2.15.1",
+    "@xmcl/installer": "6.1.2",
+    "electron-updater": "6.8.9",
+    "prismarine-auth": "3.1.1",
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "yazl": "3.3.1"
+  },
+  "overrides": {
+    "@azure/msal-node": "5.4.3",
+    "undici": "7.29.0"
+  },
+  "build": {
+    "appId": "ru.andrew.techadventure.launcher",
+    "productName": "Tech Adventure Launcher",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@xmcl/**/*"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "toolsets": {
+      "wine": "1.0.1"
+    },
+    "files": [
+      "src/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "Tech-Adventure-Launcher-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Tech Adventure Launcher",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Tech-Adventure-Launcher-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Jordandor",
+        "repo": "Tech-adventure-launcher",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

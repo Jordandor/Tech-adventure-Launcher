@@ -1,0 +1,145 @@
+name: Publish pack update
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Release tag containing the source ZIP
+        required: true
+        default: Release-branch
+      source_asset:
+        description: Source ZIP asset name
+        required: true
+        default: Stable.ver.zip
+      pack_version:
+        description: New pack version without the pack-v prefix
+        required: true
+        default: 1.0.0
+      neoforge_version:
+        description: Exact NeoForge version
+        required: true
+        default: 21.1.247
+      server_address:
+        description: Optional server host:port
+        required: false
+        default: ''
+      news:
+        description: Optional launcher news text
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-pack
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_TAG: ${{ inputs.source_tag }}
+      SOURCE_ASSET: ${{ inputs.source_asset }}
+      PACK_VERSION: ${{ inputs.pack_version }}
+      NEOFORGE_VERSION: ${{ inputs.neoforge_version }}
+      SERVER_ADDRESS: ${{ inputs.server_address }}
+      PACK_NEWS: ${{ inputs.news }}
+    steps:
+      - name: Check out pack repository
+        uses: actions/checkout@v4
+        with:
+          path: pack-repository
+
+      - name: Check out publisher
+        uses: actions/checkout@v4
+        with:
+          repository: Jordandor/Tech-adventure-launcher
+          path: launcher
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+
+      - name: Install publisher dependencies
+        working-directory: launcher
+        run: npm ci --ignore-scripts
+
+      - name: Download and unpack source build
+        shell: bash
+        run: |
+          [[ "$SOURCE_ASSET" != */* && "$SOURCE_ASSET" != *\\* ]]
+          mkdir -p incoming source release-assets generated
+          gh release download "$SOURCE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_ASSET" \
+            --dir incoming
+          unzip -q "incoming/$SOURCE_ASSET" -d source
+
+      - name: Build content-addressed packages
+        shell: bash
+        run: |
+          [[ "$PACK_VERSION" =~ ^[0-9A-Za-z._-]+$ ]]
+          tag="pack-v${PACK_VERSION}"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/"
+          args=(
+            --source "$GITHUB_WORKSPACE/source"
+            --base-url "$base_url"
+            --pack-version "$PACK_VERSION"
+            --neoforge "$NEOFORGE_VERSION"
+            --assets "$GITHUB_WORKSPACE/release-assets"
+            --output "$GITHUB_WORKSPACE/generated/pack-manifest.json"
+            --plan "$GITHUB_WORKSPACE/generated/pack-publish-plan.json"
+          )
+          if [[ -f "$GITHUB_WORKSPACE/pack-repository/pack-manifest.json" ]]; then
+            args+=(--previous "$GITHUB_WORKSPACE/pack-repository/pack-manifest.json")
+          fi
+          if [[ -n "$SERVER_ADDRESS" ]]; then
+            args+=(--server "$SERVER_ADDRESS")
+          fi
+          if [[ -n "$PACK_NEWS" ]]; then
+            args+=(--news "$PACK_NEWS")
+          fi
+          node launcher/tools/generate-manifest.mjs "${args[@]}"
+
+      - name: Create release and upload new packages
+        shell: bash
+        run: |
+          tag="pack-v${PACK_VERSION}"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Tech Adventure $PACK_VERSION" \
+              --notes "Пакетная версия сборки $PACK_VERSION."
+          fi
+          mapfile -d '' assets < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+          if (( ${#assets[@]} > 0 )); then
+            gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Publish manifest last
+        working-directory: pack-repository
+        shell: bash
+        run: |
+          cp ../generated/pack-manifest.json pack-manifest.json
+          cp ../generated/pack-publish-plan.json pack-publish-plan.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add pack-manifest.json pack-publish-plan.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Publish pack $PACK_VERSION"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Save publication plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: pack-publish-plan-${{ inputs.pack_version }}
+          path: generated/pack-publish-plan.json

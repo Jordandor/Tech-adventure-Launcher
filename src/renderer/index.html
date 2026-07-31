@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Tech Adventure Launcher</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar">
+        <div class="titlebar-brand">
+          <span class="brand-mark small"><i></i></span>
+          <span id="window-title">TECH ADVENTURE</span>
+          <span class="version-pill" id="app-version">v0.1.0</span>
+        </div>
+        <div class="window-controls">
+          <button id="minimize-button" type="button" aria-label="Свернуть">—</button>
+          <button id="close-button" class="close" type="button" aria-label="Закрыть">×</button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <span class="brand-mark"><i></i></span>
+          <div>
+            <strong>TECH</strong>
+            <span>ADVENTURE</span>
+          </div>
+        </div>
+        <nav class="main-nav" aria-label="Разделы">
+          <button class="nav-item active" data-view="home" type="button">
+            <span class="nav-icon">◆</span><span>Главная</span>
+          </button>
+          <button class="nav-item" data-view="settings" type="button">
+            <span class="nav-icon">⚙</span><span>Настройки</span>
+          </button>
+          <button class="nav-item" data-view="logs" type="button">
+            <span class="nav-icon">≡</span><span>Журнал</span>
+          </button>
+        </nav>
+        <div class="sidebar-status">
+          <span class="status-dot" id="sidebar-status-dot"></span>
+          <div>
+            <small>СОСТОЯНИЕ</small>
+            <strong id="sidebar-status">Готов к запуску</strong>
+          </div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="view active" id="view-home">
+          <div class="hero">
+            <div class="hero-grid"></div>
+            <div class="hero-copy">
+              <span class="eyebrow">СОБСТВЕННАЯ СБОРКА · NEOFORGE</span>
+              <h1 id="pack-title">Tech Adventure</h1>
+              <p>Механизмы, исследования, колонии и путешествия между мирами — в одной автоматически обновляемой сборке.</p>
+              <div class="pack-tags">
+                <span id="minecraft-tag">Minecraft 1.21.1</span>
+                <span id="neoforge-tag">NeoForge 21.1.247</span>
+                <span id="files-tag">175 модов в исходном списке</span>
+              </div>
+            </div>
+            <div class="hero-emblem" aria-hidden="true">
+              <div class="orbit orbit-a"></div>
+              <div class="orbit orbit-b"></div>
+              <div class="core-cube"><span></span></div>
+            </div>
+          </div>
+
+          <div class="home-grid">
+            <section class="panel auth-panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="section-kicker">ПРОФИЛЬ ИГРОКА</span>
+                  <h2>Способ входа</h2>
+                </div>
+                <span class="secure-badge">Локально и безопасно</span>
+              </div>
+              <div class="mode-switch" role="tablist">
+                <button id="offline-mode" class="active" type="button" role="tab">По нику</button>
+                <button id="microsoft-mode" type="button" role="tab">Microsoft</button>
+              </div>
+              <div class="auth-content" id="offline-auth">
+                <label for="offline-username">Ник в игре</label>
+                <div class="input-with-icon">
+                  <span>✦</span>
+                  <input id="offline-username" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Введите ник">
+                </div>
+                <p>Без регистрации. Подходит для сервера с отключённой проверкой лицензии.</p>
+              </div>
+              <div class="auth-content hidden" id="microsoft-auth">
+                <div class="profile-row" id="microsoft-profile">
+                  <div class="avatar">M</div>
+                  <div>
+                    <strong id="microsoft-name">Аккаунт не подключён</strong>
+                    <span id="microsoft-caption">Официальный профиль Minecraft</span>
+                  </div>
+                </div>
+                <div class="button-row">
+                  <button id="microsoft-login" class="secondary-button" type="button">Войти через Microsoft</button>
+                  <button id="microsoft-logout" class="text-button hidden" type="button">Выйти</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel news-panel">
+              <div class="panel-heading compact">
+                <div>
+                  <span class="section-kicker">ОБНОВЛЕНИЕ СБОРКИ</span>
+                  <h2 id="pack-version">Версия не загружена</h2>
+                </div>
+                <span class="live-dot"></span>
+              </div>
+              <p id="pack-news">После подключения GitHub-манифеста здесь появятся версия и новости сборки.</p>
+              <button id="open-pack-folder" class="inline-link" type="button">Открыть папку сборки <span>↗</span></button>
+            </section>
+          </div>
+
+          <section class="launch-panel">
+            <div class="progress-copy">
+              <div class="progress-line">
+                <strong id="progress-title">Всё готово</strong>
+                <span id="progress-percent">100%</span>
+              </div>
+              <div class="progress-track"><div id="progress-bar" style="width:100%"></div></div>
+              <p id="progress-detail">Выбери способ входа и запускай игру.</p>
+            </div>
+            <div class="launch-actions">
+              <button id="verify-button" class="secondary-button" type="button">Проверить файлы</button>
+              <button id="play-button" class="play-button" type="button">
+                <span class="play-triangle">▶</span>
+                <span><strong>ИГРАТЬ</strong><small id="server-caption">Запуск сборки</small></span>
+              </button>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-settings">
+          <div class="page-heading">
+            <span class="section-kicker">КОНФИГУРАЦИЯ</span>
+            <h1>Настройки лаунчера</h1>
+            <p>Эти параметры сохраняются только на этом компьютере.</p>
+          </div>
+          <form id="settings-form" class="settings-layout">
+            <section class="panel settings-card">
+              <div class="settings-heading"><span>01</span><div><h2>Сборка и сервер</h2><p>Источник обновлений и точные версии игры.</p></div></div>
+              <label>URL манифеста GitHub
+                <input id="setting-manifest" type="url" placeholder="https://raw.githubusercontent.com/.../manifest.json">
+              </label>
+              <div class="field-grid">
+                <label>Minecraft
+                  <input id="setting-minecraft" value="1.21.1">
+                </label>
+                <label>NeoForge
+                  <input id="setting-neoforge" value="21.1.247">
+                </label>
+              </div>
+              <label>Адрес сервера
+                <input id="setting-server" placeholder="play.example.org:25565">
+              </label>
+            </section>
+
+            <section class="panel settings-card">
+              <div class="settings-heading"><span>02</span><div><h2>Папки и Java</h2><p>Java 21 установится автоматически, если поле пустое.</p></div></div>
+              <label>Папка сборки
+                <div class="browse-field"><input id="setting-game-dir" readonly><button id="choose-game-dir" type="button">Обзор</button></div>
+              </label>
+              <label>Своя Java
+                <div class="browse-field"><input id="setting-java" readonly placeholder="Автоматическая Java 21"><button id="choose-java" type="button">Обзор</button><button id="clear-java" class="clear-field" type="button">×</button></div>
+              </label>
+            </section>
+
+            <section class="panel settings-card">
+              <div class="settings-heading"><span>03</span><div><h2>Производительность</h2><p>Для большой сборки рекомендуется 8–12 ГБ.</p></div></div>
+              <div class="field-grid">
+                <label>Минимум памяти, МБ
+                  <input id="setting-min-memory" type="number" min="1024" max="65536" step="512">
+                </label>
+                <label>Максимум памяти, МБ
+                  <input id="setting-max-memory" type="number" min="1024" max="65536" step="512">
+                </label>
+              </div>
+              <label class="toggle-row"><span><strong>Скрывать лаунчер после запуска</strong><small>Он вернётся после закрытия Minecraft.</small></span><input id="setting-close-on-start" type="checkbox"><i></i></label>
+            </section>
+
+            <section class="panel settings-card">
+              <div class="settings-heading"><span>04</span><div><h2>Обновления лаунчера</h2><p>Релизы отдельного GitHub-репозитория.</p></div></div>
+              <label>Репозиторий
+                <input id="setting-update-repo" placeholder="владелец/репозиторий">
+              </label>
+              <label class="toggle-row"><span><strong>Проверять автоматически</strong><small>Проверка выполняется после открытия.</small></span><input id="setting-auto-update" type="checkbox"><i></i></label>
+              <button id="check-update" class="secondary-button wide" type="button">Проверить обновление лаунчера</button>
+            </section>
+            <div class="settings-footer">
+              <span id="settings-result"></span>
+              <button class="save-button" type="submit">Сохранить настройки</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="view" id="view-logs">
+          <div class="page-heading log-heading">
+            <div><span class="section-kicker">ДИАГНОСТИКА</span><h1>Журнал запуска</h1><p>Здесь видны сообщения Minecraft и текущая стадия работы.</p></div>
+            <button id="open-log-folder" class="secondary-button" type="button">Открыть папку логов</button>
+          </div>
+          <div class="terminal-panel">
+            <div class="terminal-title"><span></span><span></span><span></span><strong>launcher.log</strong></div>
+            <pre id="log-output">[launcher] Ожидание запуска…</pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop hidden" id="device-modal">
+      <div class="device-modal" role="dialog" aria-modal="true" aria-labelledby="device-title">
+        <span class="brand-mark"><i></i></span>
+        <span class="section-kicker">MICROSOFT AUTHORIZATION</span>
+        <h2 id="device-title">Заверши вход в браузере</h2>
+        <p>Страница Microsoft уже открыта. Код также скопирован в буфер обмена.</p>
+        <div class="device-code" id="device-code">— — — —</div>
+        <button id="device-open" class="play-button compact" type="button">Открыть страницу ещё раз</button>
+        <button id="device-cancel" class="text-button modal-cancel" type="button">Скрыть окно</button>
+      </div>
+    </div>
+
+    <div class="update-banner hidden" id="update-banner">
+      <div><strong id="update-title">Доступно обновление</strong><span id="update-caption"></span></div>
+      <button id="update-action" type="button">Скачать</button>
+    </div>
+    <div class="toast hidden" id="toast"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
