@@ -25,11 +25,18 @@ const {
   writeCachedPackSummary
 } = require('./core/pack-info');
 const { pingMinecraftServer } = require('./core/server-status');
+const {
+  countMods,
+  listMods,
+  toggleMod,
+  reapplyDisabledMods
+} = require('./core/mod-manager');
 
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) app.quit();
 
 let mainWindow = null;
+let modsWindow = null;
 let settingsStore = null;
 let authManager = null;
 let packRegistry = null;
@@ -54,13 +61,12 @@ const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const PACK_INFO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const SERVER_STATUS_INTERVAL_MS = 10 * 1000;
 
-async function countInstalledMods(gameDirectory) {
+async function installedModSummary(gameDirectory) {
   try {
-    const entries = await fs.readdir(path.join(gameDirectory, 'mods'), { withFileTypes: true });
-    return entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.jar')).length;
+    return await countMods(gameDirectory);
   } catch (error) {
-    if (error.code === 'ENOENT') return 0;
-    return null;
+    await appendLauncherLog(`[launcher:mods] Не удалось подсчитать моды: ${errorMessage(error)}\n`);
+    return { enabledCount: 0, disabledCount: 0, totalCount: 0 };
   }
 }
 
@@ -70,6 +76,17 @@ function resourcePath(...parts) {
 
 function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+function sendToMods(channel, payload) {
+  if (modsWindow && !modsWindow.isDestroyed()) modsWindow.webContents.send(channel, payload);
+}
+
+async function publishModSummary(gameDirectory = effectivePackSettings().gameDirectory) {
+  const summary = await installedModSummary(gameDirectory);
+  send('mods:changed', summary);
+  sendToMods('mods:changed', summary);
+  return summary;
 }
 
 function activePack(settings = settingsStore?.get()) {
@@ -170,6 +187,7 @@ async function runExclusive(name, operation) {
   if (busyOperation) throw new Error(`Сейчас уже выполняется операция «${busyOperation}».`);
   busyOperation = name;
   send('launcher:busy', { busy: true, operation: name });
+  sendToMods('mods:lock', { locked: true, reason: name });
   const startedAt = new Date().toISOString();
   const startLine = `[launcher] ${startedAt} — ${name}\n`;
   await appendLauncherLog(startLine);
@@ -197,6 +215,7 @@ async function runExclusive(name, operation) {
       failed: Boolean(failureMessage),
       message: failureMessage
     });
+    sendToMods('mods:lock', { locked: Boolean(gameRunning), reason: gameRunning ? 'Minecraft запущен' : '' });
   }
 }
 
@@ -221,7 +240,7 @@ async function loadState() {
     serverStatus: lastServerStatus?.packId === pack?.id ? structuredClone(lastServerStatus) : null,
     auth: authManager.publicState(),
     runtime: await inspectRuntimeState(settings.gameDirectory),
-    modCount: await countInstalledMods(settings.gameDirectory),
+    modSummary: await installedModSummary(settings.gameDirectory),
     gameRunning
   };
 }
@@ -376,6 +395,7 @@ async function selectPack(packId) {
     gameDirectory: targetDirectory
   });
   currentRuntime = null;
+  if (modsWindow && !modsWindow.isDestroyed()) modsWindow.close();
   lastPackInfo = null;
   lastServerStatus = null;
   schedulePackServices();
@@ -420,14 +440,22 @@ async function preparePack(forcePackCheck) {
     force: forcePackCheck,
     onProgress: progressSink
   });
+  const reapplied = await reapplyDisabledMods(settings.gameDirectory);
+  if (reapplied.reapplied.length) {
+    const line = `[launcher:mods] Повторно выключено модов после синхронизации: ${reapplied.reapplied.length}.\n`;
+    await appendLauncherLog(line);
+    send('launcher:log', line);
+  }
+  const modSummary = await publishModSummary(settings.gameDirectory);
   if (syncResult.warning) send('launcher:warning', { message: syncResult.warning });
   if (syncResult.manifest) {
-    const modCount = await countInstalledMods(settings.gameDirectory);
     const info = {
       ...syncResult.manifest.pack,
       serverAddress: syncResult.manifest.pack.serverAddress || settings.serverAddress,
       fileCount: syncResult.managedFileCount ?? syncResult.manifest.files.length,
-      modCount,
+      modCount: modSummary.enabledCount,
+      totalModCount: modSummary.totalCount,
+      disabledModCount: modSummary.disabledCount,
       packId: settings.activePackId,
       fetchedAt: new Date().toISOString(),
       fromCache: Boolean(syncResult.fromCache),
@@ -503,10 +531,14 @@ async function performPlay() {
       onLog: logSink,
       onState: (state) => {
         send('game:state', state);
-        if (state.state === 'started') gameRunning = true;
+        if (state.state === 'started') {
+          gameRunning = true;
+          sendToMods('mods:lock', { locked: true, reason: 'Minecraft запущен' });
+        }
         if (state.state === 'window-ready' && settings.closeLauncherOnGameStart) mainWindow?.hide();
         if (['closed', 'minecraft-exit', 'error'].includes(state.state)) {
           gameRunning = false;
+          sendToMods('mods:lock', { locked: false, reason: '' });
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.show();
             mainWindow.focus();
@@ -588,6 +620,33 @@ function scheduleUpdateChecks() {
 function registerIpc() {
   ipcMain.handle('launcher:get-state', () => loadState());
   ipcMain.handle('packs:select', (_event, packId) => selectPack(String(packId || '')));
+  ipcMain.handle('mods:open', () => {
+    createModsWindow();
+    return true;
+  });
+  ipcMain.handle('mods:list', async () => {
+    const settings = effectivePackSettings();
+    const snapshot = await listMods(settings.gameDirectory, { includeIcons: true });
+    return {
+      ...snapshot,
+      packName: settings.packName,
+      gameDirectory: settings.gameDirectory,
+      locked: Boolean(busyOperation || gameRunning)
+    };
+  });
+  ipcMain.handle('mods:toggle', async (_event, payload) => {
+    if (busyOperation || gameRunning) {
+      throw new Error('Нельзя менять моды во время проверки файлов или работы Minecraft.');
+    }
+    const settings = effectivePackSettings();
+    const result = await toggleMod(settings.gameDirectory, payload?.fileName, Boolean(payload?.enabled));
+    const summary = await publishModSummary(settings.gameDirectory);
+    const line = `[launcher:mods] ${result.enabled ? 'Включён' : 'Выключен'} мод ${result.name} (${result.activeFileName}).\n`;
+    await appendLauncherLog(line);
+    send('launcher:log', line);
+    return { result, summary };
+  });
+  ipcMain.handle('mods:open-folder', () => shell.openPath(path.join(effectivePackSettings().gameDirectory, 'mods')));
   ipcMain.handle('settings:save', async (_event, patch) => {
     const saved = await settingsStore.update(patch || {});
     currentRuntime = null;
@@ -640,8 +699,40 @@ function registerIpc() {
   ipcMain.handle('update:check', () => checkForLauncherUpdates(true));
   ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
   ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(true, true));
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize());
-  ipcMain.handle('window:close', () => mainWindow?.close());
+  ipcMain.handle('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
+  ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+}
+
+function createModsWindow() {
+  if (modsWindow && !modsWindow.isDestroyed()) {
+    if (modsWindow.isMinimized()) modsWindow.restore();
+    modsWindow.show();
+    modsWindow.focus();
+    return modsWindow;
+  }
+  modsWindow = new BrowserWindow({
+    width: 1120,
+    height: 740,
+    minWidth: 820,
+    minHeight: 560,
+    show: false,
+    frame: false,
+    parent: mainWindow || undefined,
+    backgroundColor: '#0b1114',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false
+    }
+  });
+  modsWindow.loadFile(path.join(__dirname, 'renderer', 'mods.html'));
+  modsWindow.once('ready-to-show', () => modsWindow?.show());
+  modsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  modsWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  modsWindow.on('closed', () => { modsWindow = null; });
+  return modsWindow;
 }
 
 function createWindow() {

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Моды — Dekodev Reborn</title>
+    <link rel="stylesheet" href="mods.css">
+  </head>
+  <body>
+    <div class="mods-shell">
+      <header class="titlebar">
+        <div class="titlebar-brand">
+          <span class="brand-mark"><i></i></span>
+          <span>DEKODEV REBORN</span>
+          <span class="title-divider"></span>
+          <strong>МОДЫ СБОРКИ</strong>
+        </div>
+        <div class="window-controls">
+          <button id="minimize-button" type="button" aria-label="Свернуть">—</button>
+          <button id="close-button" class="close" type="button" aria-label="Закрыть">×</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="page-heading">
+          <div>
+            <span class="eyebrow">УПРАВЛЕНИЕ СБОРКОЙ</span>
+            <h1 id="page-title">Моды Tech Adventure</h1>
+            <p>Выключенный мод остаётся на компьютере и не загружается при следующем запуске Minecraft.</p>
+          </div>
+          <button id="open-folder" class="secondary-button" type="button">Открыть папку mods <span>↗</span></button>
+        </section>
+
+        <section class="warning-card">
+          <span class="warning-icon">!</span>
+          <div>
+            <strong>Отключение зависимостей может помешать запуску сборки</strong>
+            <span>Изменения применяются при следующем запуске. Проверка файлов не включает выключенные моды обратно.</span>
+          </div>
+        </section>
+
+        <section class="toolbar">
+          <label class="search-field">
+            <span>⌕</span>
+            <input id="search-input" type="search" autocomplete="off" spellcheck="false" placeholder="Поиск по названию, ID или имени файла">
+          </label>
+          <div class="filters" role="tablist" aria-label="Фильтр модов">
+            <button class="filter active" data-filter="all" type="button">Все <span id="total-count">—</span></button>
+            <button class="filter" data-filter="enabled" type="button">Включены <span id="enabled-count">—</span></button>
+            <button class="filter" data-filter="disabled" type="button">Выключены <span id="disabled-count">—</span></button>
+          </div>
+        </section>
+
+        <section class="mods-panel">
+          <div class="table-head">
+            <span>МОД</span>
+            <span>ВЕРСИЯ</span>
+            <span>ЗАГРУЗЧИК</span>
+            <span>СОСТОЯНИЕ</span>
+          </div>
+          <div class="loading-state" id="loading-state">
+            <span class="loading-cog">⚙</span>
+            <strong>Читаю установленные моды…</strong>
+            <p>Первое открытие может занять несколько секунд.</p>
+          </div>
+          <div class="empty-state hidden" id="empty-state">
+            <strong>Ничего не найдено</strong>
+            <p>Измени поисковый запрос или фильтр.</p>
+          </div>
+          <div class="mods-list hidden" id="mods-list"></div>
+        </section>
+
+        <footer>
+          <span id="footer-status">Подготовка списка…</span>
+          <span>Файлы выключаются переименованием в <code>.jar.disabled</code></span>
+        </footer>
+      </main>
+    </div>
+    <div class="toast hidden" id="toast"></div>
+    <script src="mods.js"></script>
+  </body>
+</html>

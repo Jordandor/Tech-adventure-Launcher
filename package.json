@@ -1,6 +1,6 @@
 {
   "name": "tech-adventure-launcher",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "description": "Лаунчер сообщества Dekodev Reborn для сервера Tech Adventure на Minecraft 1.21.1 NeoForge",
   "main": "src/main.js",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/core/runtime-bootstrap.js && node --check src/core/auth.js && node --check src/core/pack-registry.js && node --check src/core/pack-info.js && node --check src/core/server-status.js && node --check src/core/minecraft.js && node --check src/core/settings.js && node --check src/renderer/app.js && node --check tools/generate-manifest.mjs && npm test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/core/runtime-bootstrap.js && node --check src/core/auth.js && node --check src/core/pack-registry.js && node --check src/core/pack-info.js && node --check src/core/server-status.js && node --check src/core/mod-manager.js && node --check src/core/synchronizer.js && node --check src/core/minecraft.js && node --check src/core/settings.js && node --check src/renderer/app.js && node --check src/renderer/mods.js && node --check tools/generate-manifest.mjs && npm test",
     "pack:win": "electron-builder --win portable --x64",
     "dist:win": "electron-builder --win nsis portable --x64",
     "manifest": "node tools/generate-manifest.mjs"

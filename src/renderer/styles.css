@@ -499,3 +499,43 @@ button:disabled { opacity: 0.42; pointer-events: none; }
   .profile-grid,
   .action-grid { grid-template-columns: 1fr; }
 }
+
+/* 0.2.8: кнопка библиотеки модов */
+.hero-meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 20px;
+}
+.hero-meta-row .pack-tags { margin-top: 0; }
+.mods-library-button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: color-mix(in srgb, var(--pack-accent) 82%, white);
+  font-size: 9px;
+  font-weight: 800;
+  border: 1px solid color-mix(in srgb, var(--pack-accent) 29%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pack-accent) 7%, rgba(6, 13, 15, 0.58));
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+.mods-library-button:hover {
+  border-color: color-mix(in srgb, var(--pack-accent) 52%, transparent);
+  background: color-mix(in srgb, var(--pack-accent) 12%, rgba(6, 13, 15, 0.64));
+  box-shadow: 0 7px 22px color-mix(in srgb, var(--pack-accent) 9%, transparent);
+  transform: translateY(-1px);
+}
+.mods-library-icon {
+  color: var(--pack-accent);
+  font-size: 13px;
+  line-height: 1;
+}
+
+@media (max-width: 1050px) {
+  .hero-meta-row { max-width: 520px; }
+}

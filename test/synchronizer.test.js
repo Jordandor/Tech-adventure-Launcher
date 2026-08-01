@@ -161,3 +161,54 @@ test('пакетная синхронизация скачивает тольк�
   assert.equal(await fs.readFile(path.join(game, 'config', 'iris.properties'), 'utf8'), 'enableShaders=false\n');
   assert.equal(await fs.readFile(path.join(game, 'config', 'pack.toml'), 'utf8'), configPayload.toString());
 });
+
+test('проверка сборки сохраняет выключенный мод и не скачивает его повторно', async (t) => {
+  const game = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-disabled-sync-'));
+  t.after(() => fs.rm(game, { recursive: true, force: true }));
+  const metadata = path.join(game, '.tech-adventure-launcher');
+  await fs.mkdir(path.join(game, 'mods'), { recursive: true });
+  await fs.mkdir(metadata, { recursive: true });
+
+  const payload = Buffer.from('disabled mod bytes');
+  const digest = crypto.createHash('sha256').update(payload).digest('hex');
+  await fs.writeFile(path.join(game, 'mods', 'optional.jar.disabled'), payload);
+  await fs.writeFile(path.join(metadata, 'state.json'), JSON.stringify({
+    schemaVersion: 2,
+    packId: 'test',
+    files: [{ path: 'mods/optional.jar', sha256: digest, size: payload.length, packageId: `raw-${digest}`, policy: 'managed' }]
+  }));
+
+  const manifest = {
+    schemaVersion: 2,
+    pack: { id: 'test', name: 'Test', version: '2.0.0', minecraftVersion: '1.21.1', neoForgeVersion: '21.1.235' },
+    packages: [{
+      id: `raw-${digest}`,
+      format: 'raw',
+      url: 'https://github.com/example/pack/releases/download/v2/optional.bin',
+      sha256: digest,
+      size: payload.length
+    }],
+    files: [{ path: 'mods/optional.jar', packageId: `raw-${digest}`, sha256: digest, size: payload.length, policy: 'managed' }]
+  };
+
+  const originalFetch = global.fetch;
+  let assetRequests = 0;
+  global.fetch = async (url) => {
+    if (String(url).includes('manifest.json')) {
+      return new Response(JSON.stringify(manifest), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    assetRequests += 1;
+    return new Response(payload, { status: 200 });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const result = await syncPack({
+    manifestUrl: 'https://raw.githubusercontent.com/example/pack/main/manifest.json',
+    gameDirectory: game,
+    force: true
+  });
+  assert.deepEqual(result.changed, []);
+  assert.equal(assetRequests, 0);
+  await fs.access(path.join(game, 'mods', 'optional.jar.disabled'));
+  await assert.rejects(fs.access(path.join(game, 'mods', 'optional.jar')));
+});

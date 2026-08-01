@@ -16,8 +16,9 @@ const {
   validateGithubUrl
 } = require('./manifest');
 const { writeJsonAtomic } = require('./settings');
+const { isManagedModPath, disabledManagedPath } = require('./mod-manager');
 
-const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.7';
+const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.8';
 const MAX_ZIP_ENTRIES = 50000;
 
 async function exists(file) {
@@ -27,6 +28,16 @@ async function exists(file) {
   } catch {
     return false;
   }
+}
+
+async function resolveExistingManagedDestination(gameDirectory, managedPath, destinationResolver) {
+  const active = destinationResolver(gameDirectory, managedPath);
+  if (await exists(active)) return { destination: active, disabled: false };
+  if (!isManagedModPath(managedPath)) return { destination: active, disabled: false };
+  const disabledPath = disabledManagedPath(managedPath);
+  const disabled = destinationResolver(gameDirectory, disabledPath);
+  if (await exists(disabled)) return { destination: disabled, disabled: true };
+  return { destination: active, disabled: false };
 }
 
 async function hashFile(file) {
@@ -187,31 +198,32 @@ function stateFilesMap(state, normalizer = normalizeManagedPath) {
 }
 
 async function inspectEntry({ entry, gameDirectory, oldFiles, force }) {
-  const destination = safeDestination(gameDirectory, entry.path);
+  const resolved = await resolveExistingManagedDestination(gameDirectory, entry.path, safeDestination);
   let stat;
   try {
-    stat = await fsp.stat(destination);
+    stat = await fsp.stat(resolved.destination);
   } catch {
-    return { entry, current: false };
+    return { entry, current: false, disabled: resolved.disabled };
   }
-  if (!stat.isFile() || stat.size !== entry.size) return { entry, current: false };
+  if (!stat.isFile() || stat.size !== entry.size) return { entry, current: false, disabled: resolved.disabled };
 
   const previous = oldFiles.get(entry.path.toLowerCase());
   if (!force && previous?.sha256 === entry.sha256 && previous?.size === entry.size) {
-    return { entry, current: true };
+    return { entry, current: true, disabled: resolved.disabled };
   }
-  return { entry, current: (await hashFile(destination)) === entry.sha256 };
+  return { entry, current: (await hashFile(resolved.destination)) === entry.sha256, disabled: resolved.disabled };
 }
 
 async function moveStaleFiles({ gameDirectory, oldFiles, nextFiles, trashDirectory, destinationResolver = safeDestination }) {
   const moved = [];
   for (const previous of oldFiles.values()) {
     if (nextFiles.has(previous.path.toLowerCase()) || previous.policy === 'seed') continue;
-    const source = destinationResolver(gameDirectory, previous.path);
-    if (!(await exists(source))) continue;
-    const destination = path.join(trashDirectory, ...previous.path.split('/'));
+    const resolved = await resolveExistingManagedDestination(gameDirectory, previous.path, destinationResolver);
+    if (!(await exists(resolved.destination))) continue;
+    const storedPath = resolved.disabled ? disabledManagedPath(previous.path) : previous.path;
+    const destination = path.join(trashDirectory, ...storedPath.split('/'));
     await fsp.mkdir(path.dirname(destination), { recursive: true });
-    await renameWithRetry(source, destination);
+    await renameWithRetry(resolved.destination, destination);
     moved.push(previous.path);
   }
   return moved;
@@ -238,8 +250,8 @@ async function syncLegacyManifest({ manifest, state, stateFile, gameDirectory, s
     });
     return result;
   });
-  const required = inspected.filter((item) => !item.current).map((item) => item.entry);
-  const totalBytes = required.reduce((sum, item) => sum + item.size, 0);
+  const required = inspected.filter((item) => !item.current);
+  const totalBytes = required.reduce((sum, item) => sum + item.entry.size, 0);
   let downloadedBytes = 0;
   const changed = [];
 
@@ -250,7 +262,8 @@ async function syncLegacyManifest({ manifest, state, stateFile, gameDirectory, s
     total: totalBytes
   });
 
-  await mapLimit(required, 4, async (entry) => {
+  await mapLimit(required, 4, async (item) => {
+    const entry = item.entry;
     const stagedFile = path.join(stagingDirectory, `${entry.sha256}.part`);
     await downloadFile(entry, stagedFile, (bytes) => {
       downloadedBytes += bytes;
@@ -262,7 +275,8 @@ async function syncLegacyManifest({ manifest, state, stateFile, gameDirectory, s
         file: entry.path
       });
     });
-    await installStagedFile({ gameDirectory, entry, stagedFile, trashDirectory });
+    const installEntry = item.disabled ? { ...entry, path: disabledManagedPath(entry.path) } : entry;
+    await installStagedFile({ gameDirectory, entry: installEntry, stagedFile, trashDirectory });
     changed.push(entry.path);
   });
 
@@ -280,22 +294,22 @@ async function syncLegacyManifest({ manifest, state, stateFile, gameDirectory, s
 }
 
 async function inspectPackageEntry({ entry, gameDirectory, oldFiles, force }) {
-  const destination = safePackDestination(gameDirectory, entry.path);
+  const resolved = await resolveExistingManagedDestination(gameDirectory, entry.path, safePackDestination);
   let stat;
   try {
-    stat = await fsp.stat(destination);
+    stat = await fsp.stat(resolved.destination);
   } catch {
-    return { entry, current: false };
+    return { entry, current: false, disabled: resolved.disabled };
   }
-  if (!stat.isFile()) return { entry, current: false };
-  if (entry.policy === 'seed') return { entry, current: true };
-  if (stat.size !== entry.size) return { entry, current: false };
+  if (!stat.isFile()) return { entry, current: false, disabled: resolved.disabled };
+  if (entry.policy === 'seed') return { entry, current: true, disabled: resolved.disabled };
+  if (stat.size !== entry.size) return { entry, current: false, disabled: resolved.disabled };
 
   const previous = oldFiles.get(entry.path.toLowerCase());
   if (!force && previous?.sha256 === entry.sha256 && previous?.size === entry.size) {
-    return { entry, current: true };
+    return { entry, current: true, disabled: resolved.disabled };
   }
-  return { entry, current: (await hashFile(destination)) === entry.sha256 };
+  return { entry, current: (await hashFile(resolved.destination)) === entry.sha256, disabled: resolved.disabled };
 }
 
 function isUnsafeZipLink(entry) {
@@ -487,20 +501,23 @@ async function syncPackageManifest({ manifest, state, stateFile, gameDirectory, 
     });
     return result;
   });
-  const required = inspected.filter((item) => !item.current).map((item) => item.entry);
+  const required = inspected.filter((item) => !item.current);
+  const requiredEntries = required.map((item) => item.entry);
   const transactionDirectory = await fsp.mkdtemp(path.join(stagingDirectory, 'sync-'));
   const changed = [];
   try {
-    const staged = await preparePackages({ manifest, required, transactionDirectory, onProgress });
+    const staged = await preparePackages({ manifest, required: requiredEntries, transactionDirectory, onProgress });
     let installed = 0;
-    for (const entry of required.slice().sort((a, b) => a.path.localeCompare(b.path, 'en'))) {
-      const destination = safePackDestination(gameDirectory, entry.path);
+    for (const item of required.slice().sort((a, b) => a.entry.path.localeCompare(b.entry.path, 'en'))) {
+      const entry = item.entry;
+      const destination = safePackDestination(gameDirectory, item.disabled ? disabledManagedPath(entry.path) : entry.path);
       if (entry.policy === 'seed' && await exists(destination)) continue;
       const stagedFile = staged.get(entry.path.toLowerCase());
       if (!stagedFile) throw new Error(`Не подготовлен файл ${entry.path}.`);
+      const installEntry = item.disabled ? { ...entry, path: disabledManagedPath(entry.path) } : entry;
       await installStagedFile({
         gameDirectory,
-        entry,
+        entry: installEntry,
         stagedFile,
         trashDirectory,
         destinationResolver: safePackDestination

@@ -15,6 +15,7 @@ const elements = {
   minecraftTag: byId('minecraft-tag'),
   neoForgeTag: byId('neoforge-tag'),
   filesTag: byId('files-tag'),
+  openModsButton: byId('open-mods-button'),
   packVersion: byId('pack-version'),
   packNews: byId('pack-news'),
   packInfoCaption: byId('pack-info-caption'),
@@ -110,6 +111,16 @@ function russianModLabel(count) {
   if (last === 1) return 'мод';
   if (last >= 2 && last <= 4) return 'мода';
   return 'модов';
+}
+
+function renderModSummary(summary) {
+  if (!summary) return;
+  const enabled = Number(summary.enabledCount);
+  const total = Number(summary.totalCount);
+  if (!Number.isFinite(enabled)) return;
+  elements.filesTag.textContent = Number.isFinite(total) && total > enabled
+    ? `${enabled} из ${total} ${russianModLabel(total)}`
+    : `${enabled} ${russianModLabel(enabled)}`;
 }
 
 function russianPlayerLabel(count) {
@@ -323,8 +334,11 @@ function renderPackInfo(pack) {
   elements.packInfoDot.className = `live-dot${pack.stale || pack.fromCache ? ' warning' : ''}`;
 
   if (Number.isFinite(pack.modCount)) {
-    elements.filesTag.textContent = `${pack.modCount} ${russianModLabel(pack.modCount)}`;
-  } else if (Number.isFinite(pack.fileCount) && !Number.isFinite(state?.modCount)) {
+    renderModSummary({
+      enabledCount: pack.modCount,
+      totalCount: Number.isFinite(pack.totalModCount) ? pack.totalModCount : pack.modCount
+    });
+  } else if (Number.isFinite(pack.fileCount) && !Number.isFinite(state?.modSummary?.enabledCount)) {
     elements.filesTag.textContent = `${pack.fileCount} управляемых файлов`;
   }
 }
@@ -525,9 +539,7 @@ function applyState(nextState) {
       fetchedAt: state.packInfo.fetchedAt
     });
   }
-  if (Number.isFinite(state.modCount)) {
-    elements.filesTag.textContent = `${state.modCount} ${russianModLabel(state.modCount)}`;
-  }
+  renderModSummary(state.modSummary);
   if (state.runtime.installed) {
     elements.progressDetail.textContent = `Установлены Minecraft ${state.runtime.minecraftVersion} и NeoForge ${state.runtime.neoForgeVersion}`;
   }
@@ -553,6 +565,10 @@ elements.packSwitcher.addEventListener('mouseenter', () => {
   if ((state?.packs?.length || 0) > 1) setPackMenuOpen(true);
 });
 elements.packSwitcher.addEventListener('mouseleave', () => setPackMenuOpen(false));
+
+elements.openModsButton.addEventListener('click', () => {
+  attempt(() => window.launcher.openMods());
+});
 
 elements.offlineMode.addEventListener('click', () => setAuthMode('offline', true));
 elements.microsoftMode.addEventListener('click', () => setAuthMode('microsoft', true));
@@ -632,6 +648,7 @@ window.launcher.onBusy(({ busy: isBusy, operation, failed, message }) => setBusy
 window.launcher.onWarning(({ message }) => showToast(message, 'warning', 8000));
 window.launcher.onPackInfo((pack) => renderPackInfo(pack));
 window.launcher.onServerStatus((status) => renderServerStatus(status));
+window.launcher.onModsChanged((summary) => renderModSummary(summary));
 window.launcher.onLog(appendLog);
 window.launcher.onDeviceCode((code) => {
   deviceVerificationUri = code.verificationUri || deviceVerificationUri;
