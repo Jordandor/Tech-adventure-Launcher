@@ -9,7 +9,7 @@ const { pipeline } = require('node:stream/promises');
 const yauzl = require('yauzl');
 const { writeJsonAtomic } = require('./settings');
 
-const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.10';
+const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.11';
 const DOWNLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const MAX_ZIP_ENTRIES = 200000;
 const MAX_UNCOMPRESSED_BYTES = 6 * 1024 * 1024 * 1024;
