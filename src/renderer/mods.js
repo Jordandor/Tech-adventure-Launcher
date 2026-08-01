@@ -11,12 +11,23 @@ const elements = {
   enabledCount: byId('enabled-count'),
   disabledCount: byId('disabled-count'),
   footerStatus: byId('footer-status'),
-  toast: byId('toast')
+  toast: byId('toast'),
+  enableAll: byId('enable-all'),
+  disableAll: byId('disable-all'),
+  modal: byId('decision-modal'),
+  modalKicker: byId('decision-kicker'),
+  modalTitle: byId('decision-title'),
+  modalMessage: byId('decision-message'),
+  modalList: byId('decision-list'),
+  modalCancel: byId('decision-cancel'),
+  modalPrimary: byId('decision-primary'),
+  modalSecondary: byId('decision-secondary')
 };
 
 let snapshot = { mods: [], enabledCount: 0, disabledCount: 0, totalCount: 0, locked: false };
 let filter = 'all';
 let toastTimer = null;
+let decisionResolve = null;
 
 function friendlyError(error) {
   return String(error?.message || error || 'Неизвестная ошибка')
@@ -54,6 +65,105 @@ function matches(mod) {
     .some((value) => String(value || '').toLocaleLowerCase('ru').includes(query));
 }
 
+function closeDecision(choice = 'cancel') {
+  elements.modal.classList.add('hidden');
+  const resolve = decisionResolve;
+  decisionResolve = null;
+  resolve?.(choice);
+}
+
+function openDecision({ kicker, title, message, items = [], primary, secondary = null }) {
+  if (decisionResolve) closeDecision('cancel');
+  elements.modalKicker.textContent = kicker || 'ПОДТВЕРЖДЕНИЕ';
+  elements.modalTitle.textContent = title;
+  elements.modalMessage.textContent = message;
+  elements.modalList.replaceChildren();
+  elements.modalList.classList.toggle('hidden', items.length === 0);
+
+  const visibleItems = items.slice(0, 12);
+  for (const item of visibleItems) {
+    const row = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = item.name || item.activeFileName || item.fileName;
+    const details = document.createElement('span');
+    details.textContent = item.modId ? `${item.modId}${item.dependencyDepth ? ` · уровень зависимости ${item.dependencyDepth}` : ''}` : item.activeFileName || '';
+    row.append(name, details);
+    elements.modalList.append(row);
+  }
+  if (items.length > visibleItems.length) {
+    const more = document.createElement('div');
+    more.className = 'decision-more';
+    more.textContent = `И ещё ${items.length - visibleItems.length}`;
+    elements.modalList.append(more);
+  }
+
+  elements.modalPrimary.textContent = primary.label;
+  elements.modalPrimary.dataset.choice = primary.choice;
+  elements.modalPrimary.className = `decision-button ${primary.kind || 'primary'}`;
+
+  if (secondary) {
+    elements.modalSecondary.textContent = secondary.label;
+    elements.modalSecondary.dataset.choice = secondary.choice;
+    elements.modalSecondary.className = `decision-button ${secondary.kind || 'secondary'}`;
+    elements.modalSecondary.classList.remove('hidden');
+  } else {
+    elements.modalSecondary.classList.add('hidden');
+  }
+
+  elements.modal.classList.remove('hidden');
+  elements.modalPrimary.focus();
+  return new Promise((resolve) => { decisionResolve = resolve; });
+}
+
+async function reloadMods({ showLoading = false } = {}) {
+  if (showLoading) {
+    elements.loading.classList.remove('hidden');
+    elements.list.classList.add('hidden');
+    elements.empty.classList.add('hidden');
+  }
+  const previousLocked = snapshot.locked;
+  const next = await window.launcher.listMods();
+  snapshot = { ...next, locked: Boolean(next.locked || previousLocked) };
+  elements.pageTitle.textContent = `Моды ${snapshot.packName || 'сборки'}`;
+  render();
+}
+
+async function toggleSingleMod(mod, nextEnabled) {
+  if (snapshot.locked) return;
+  let cascade = false;
+
+  if (!nextEnabled) {
+    const analysis = await window.launcher.analyzeModToggle(mod.fileName, false);
+    if (analysis.requiresConfirmation) {
+      const count = analysis.dependents.length;
+      const choice = await openDecision({
+        kicker: 'ПРОВЕРКА ЗАВИСИМОСТЕЙ',
+        title: `${mod.name} требуется другим модам`,
+        message: `От этого мода зависит ${count} ${count === 1 ? 'включённый мод' : 'включённых модов'}. Выключение только выбранного мода может привести к ошибке запуска сборки.`,
+        items: analysis.dependents,
+        primary: { choice: 'only', label: 'Выключить только этот', kind: 'warning' },
+        secondary: { choice: 'cascade', label: 'Выключить также зависимые', kind: 'danger' }
+      });
+      if (choice === 'cancel') return;
+      cascade = choice === 'cascade';
+    }
+  }
+
+  snapshot.locked = true;
+  render();
+  try {
+    const response = await window.launcher.toggleMod(mod.fileName, nextEnabled, cascade);
+    await reloadMods();
+    const extra = response.dependentCount
+      ? ` Вместе с ним выключено зависимых модов: ${response.dependentCount}.`
+      : '';
+    showToast(`${mod.name}: ${nextEnabled ? 'включён' : 'выключен'}.${extra} Изменение применится при следующем запуске.`);
+  } finally {
+    snapshot.locked = false;
+    render();
+  }
+}
+
 function createModRow(mod) {
   const row = document.createElement('article');
   row.className = `mod-row${mod.enabled ? '' : ' disabled'}`;
@@ -78,9 +188,18 @@ function createModRow(mod) {
   name.title = mod.description || mod.fileName;
   const file = document.createElement('span');
   file.textContent = `${mod.activeFileName} · ${formatBytes(mod.size)}`;
-  const badge = document.createElement('small');
-  badge.textContent = mod.managed ? 'Управляется сборкой' : 'Пользовательский мод';
-  copy.append(name, file, badge);
+  const badges = document.createElement('div');
+  badges.className = 'mod-badges';
+  const sourceBadge = document.createElement('small');
+  sourceBadge.textContent = mod.managed ? 'Управляется сборкой' : 'Пользовательский мод';
+  badges.append(sourceBadge);
+  if (Array.isArray(mod.dependencies) && mod.dependencies.length) {
+    const dependencyBadge = document.createElement('small');
+    dependencyBadge.textContent = `Зависимостей: ${mod.dependencies.length}`;
+    dependencyBadge.title = mod.dependencies.join(', ');
+    badges.append(dependencyBadge);
+  }
+  copy.append(name, file, badges);
   identity.append(icon, copy);
 
   const version = document.createElement('div');
@@ -105,20 +224,13 @@ function createModRow(mod) {
   toggle.ariaLabel = `${mod.enabled ? 'Выключить' : 'Включить'} ${mod.name}`;
   toggle.disabled = snapshot.locked;
   toggle.addEventListener('click', async () => {
-    const nextEnabled = !mod.enabled;
     toggle.disabled = true;
     try {
-      const response = await window.launcher.toggleMod(mod.fileName, nextEnabled);
-      mod.enabled = nextEnabled;
-      mod.fileName = response.result.fileName;
-      snapshot.enabledCount = response.summary.enabledCount;
-      snapshot.disabledCount = response.summary.disabledCount;
-      snapshot.totalCount = response.summary.totalCount;
-      render();
-      showToast(`${mod.name}: ${nextEnabled ? 'включён' : 'выключен'}. Изменение применится при следующем запуске.`);
+      await toggleSingleMod(mod, !mod.enabled);
     } catch (error) {
-      toggle.disabled = false;
-      showToast(friendlyError(error), 'error', 7500);
+      showToast(friendlyError(error), 'error', 8000);
+    } finally {
+      toggle.disabled = snapshot.locked;
     }
   });
   state.append(stateLabel, toggle);
@@ -130,8 +242,10 @@ function updateCounts() {
   elements.totalCount.textContent = snapshot.totalCount;
   elements.enabledCount.textContent = snapshot.enabledCount;
   elements.disabledCount.textContent = snapshot.disabledCount;
+  elements.enableAll.disabled = snapshot.locked || snapshot.disabledCount === 0;
+  elements.disableAll.disabled = snapshot.locked || snapshot.enabledCount === 0;
   elements.footerStatus.textContent = snapshot.locked
-    ? 'Minecraft или проверка файлов сейчас работают — переключатели временно заблокированы.'
+    ? 'Minecraft или операция с файлами сейчас работает — переключатели временно заблокированы.'
     : `Включено ${snapshot.enabledCount} из ${snapshot.totalCount} модов.`;
 }
 
@@ -144,11 +258,40 @@ function render() {
   updateCounts();
 }
 
+async function setAll(enabled) {
+  const count = enabled ? snapshot.disabledCount : snapshot.enabledCount;
+  if (!count || snapshot.locked) return;
+  const choice = await openDecision({
+    kicker: 'МАССОВОЕ ИЗМЕНЕНИЕ',
+    title: enabled ? 'Включить все моды?' : 'Выключить все моды?',
+    message: enabled
+      ? `Будут включены все ${count} выключенных модов. Изменение применится при следующем запуске.`
+      : `Будут выключены все ${count} активных модов. Minecraft запустится без модов из этой папки.`,
+    primary: {
+      choice: 'confirm',
+      label: enabled ? 'Включить все' : 'Выключить все',
+      kind: enabled ? 'primary' : 'danger'
+    }
+  });
+  if (choice !== 'confirm') return;
+
+  snapshot.locked = true;
+  render();
+  try {
+    const response = await window.launcher.setAllMods(enabled);
+    await reloadMods();
+    showToast(`${enabled ? 'Включено' : 'Выключено'} модов: ${response.results.length}. Изменение применится при следующем запуске.`);
+  } catch (error) {
+    showToast(friendlyError(error), 'error', 8500);
+  } finally {
+    snapshot.locked = false;
+    render();
+  }
+}
+
 async function loadMods() {
   try {
-    snapshot = await window.launcher.listMods();
-    elements.pageTitle.textContent = `Моды ${snapshot.packName || 'сборки'}`;
-    render();
+    await reloadMods({ showLoading: true });
   } catch (error) {
     elements.loading.classList.add('hidden');
     elements.empty.classList.remove('hidden');
@@ -166,9 +309,20 @@ document.querySelectorAll('.filter').forEach((button) => {
   });
 });
 elements.search.addEventListener('input', render);
+elements.enableAll.addEventListener('click', () => setAll(true));
+elements.disableAll.addEventListener('click', () => setAll(false));
 byId('open-folder').addEventListener('click', () => window.launcher.openModsFolder());
 byId('minimize-button').addEventListener('click', () => window.launcher.minimize());
 byId('close-button').addEventListener('click', () => window.launcher.close());
+elements.modalCancel.addEventListener('click', () => closeDecision('cancel'));
+elements.modalPrimary.addEventListener('click', () => closeDecision(elements.modalPrimary.dataset.choice));
+elements.modalSecondary.addEventListener('click', () => closeDecision(elements.modalSecondary.dataset.choice));
+elements.modal.addEventListener('click', (event) => {
+  if (event.target === elements.modal) closeDecision('cancel');
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.modal.classList.contains('hidden')) closeDecision('cancel');
+});
 window.launcher.onModsChanged((summary) => {
   snapshot = { ...snapshot, ...summary };
   updateCounts();

@@ -28,7 +28,9 @@ const { pingMinecraftServer } = require('./core/server-status');
 const {
   countMods,
   listMods,
-  toggleMod,
+  analyzeModToggle,
+  toggleMods,
+  setAllMods,
   reapplyDisabledMods
 } = require('./core/mod-manager');
 
@@ -634,17 +636,60 @@ function registerIpc() {
       locked: Boolean(busyOperation || gameRunning)
     };
   });
+  ipcMain.handle('mods:analyze-toggle', async (_event, payload) => {
+    if (busyOperation || gameRunning) {
+      throw new Error('Нельзя менять моды во время проверки файлов или работы Minecraft.');
+    }
+    const settings = effectivePackSettings();
+    return analyzeModToggle(settings.gameDirectory, payload?.fileName, Boolean(payload?.enabled));
+  });
   ipcMain.handle('mods:toggle', async (_event, payload) => {
     if (busyOperation || gameRunning) {
       throw new Error('Нельзя менять моды во время проверки файлов или работы Minecraft.');
     }
     const settings = effectivePackSettings();
-    const result = await toggleMod(settings.gameDirectory, payload?.fileName, Boolean(payload?.enabled));
+    const enabled = Boolean(payload?.enabled);
+    let analysis = null;
+    let files = [payload?.fileName];
+    if (!enabled) {
+      analysis = await analyzeModToggle(settings.gameDirectory, payload?.fileName, false);
+      if (payload?.cascade && analysis.dependents.length) {
+        files = [
+          ...analysis.dependents
+            .slice()
+            .sort((a, b) => b.dependencyDepth - a.dependencyDepth)
+            .map((mod) => mod.fileName),
+          analysis.target.fileName
+        ];
+      }
+    }
+    const changed = await toggleMods(settings.gameDirectory, files, enabled);
     const summary = await publishModSummary(settings.gameDirectory);
-    const line = `[launcher:mods] ${result.enabled ? 'Включён' : 'Выключен'} мод ${result.name} (${result.activeFileName}).\n`;
+    const targetName = analysis?.target?.name || changed.results[0]?.name || payload?.fileName;
+    const dependentCount = Math.max(0, changed.results.length - 1);
+    const suffix = dependentCount ? ` и ${dependentCount} зависимых модов` : '';
+    const line = `[launcher:mods] ${enabled ? 'Включён' : 'Выключен'} мод ${targetName}${suffix}.\n`;
     await appendLauncherLog(line);
     send('launcher:log', line);
-    return { result, summary };
+    return {
+      result: changed.results.find((item) => item.activeFileName === analysis?.target?.activeFileName) || changed.results[0] || null,
+      results: changed.results,
+      summary,
+      dependentCount
+    };
+  });
+  ipcMain.handle('mods:set-all', async (_event, payload) => {
+    if (busyOperation || gameRunning) {
+      throw new Error('Нельзя менять моды во время проверки файлов или работы Minecraft.');
+    }
+    const settings = effectivePackSettings();
+    const enabled = Boolean(payload?.enabled);
+    const changed = await setAllMods(settings.gameDirectory, enabled);
+    const summary = await publishModSummary(settings.gameDirectory);
+    const line = `[launcher:mods] ${enabled ? 'Включены' : 'Выключены'} все моды. Изменено файлов: ${changed.results.length}.\n`;
+    await appendLauncherLog(line);
+    send('launcher:log', line);
+    return { results: changed.results, summary };
   });
   ipcMain.handle('mods:open-folder', () => shell.openPath(path.join(effectivePackSettings().gameDirectory, 'mods')));
   ipcMain.handle('settings:save', async (_event, patch) => {

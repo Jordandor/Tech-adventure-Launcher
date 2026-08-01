@@ -5,7 +5,7 @@ const path = require('node:path');
 const { validateGithubUrl } = require('./manifest');
 const { writeJsonAtomic } = require('./settings');
 
-const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.8';
+const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.9';
 
 function normalizePackSummary(rawPack, fallback = {}) {
   const raw = rawPack && typeof rawPack === 'object' ? rawPack : {};

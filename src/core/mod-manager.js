@@ -9,6 +9,18 @@ const DISABLED_SUFFIX = '.disabled';
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_ICON_BYTES = 768 * 1024;
 const MAX_JAR_ENTRIES = 20000;
+const METADATA_CACHE_SCHEMA_VERSION = 2;
+const PLATFORM_DEPENDENCY_IDS = new Set([
+  'minecraft',
+  'neoforge',
+  'forge',
+  'java',
+  'javafml',
+  'lowcodefml',
+  'modlauncher',
+  'fabricloader',
+  'quilt_loader'
+]);
 
 function isActiveModName(name) {
   return typeof name === 'string' && name.toLowerCase().endsWith('.jar');
@@ -95,10 +107,66 @@ function manifestValue(text, key) {
   return line ? line.slice(line.indexOf(':') + 1).trim() : '';
 }
 
+function normalizedModId(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function uniqueModIds(values) {
+  const result = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const id = normalizedModId(value);
+    if (!id || PLATFORM_DEPENDENCY_IDS.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
+function dependencyIdsFromObject(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      if (typeof item === 'string') return [item];
+      if (item && typeof item === 'object') return [item.id, item.mod_id, item.modId].filter(Boolean);
+      return [];
+    });
+  }
+  if (typeof value === 'object') return Object.keys(value);
+  return [];
+}
+
+function parseNeoForgeDependencies(source, ownerIds) {
+  const owners = new Set((ownerIds || []).map(normalizedModId).filter(Boolean));
+  const dependencies = [];
+  const blockPattern = /\[\[dependencies\.([^\]]+)\]\]([\s\S]*?)(?=\n\s*\[\[|$)/gi;
+  for (const match of String(source || '').matchAll(blockPattern)) {
+    const owner = cleanTomlValue(match[1]).toLowerCase();
+    if (owners.size && !owners.has(owner)) continue;
+    const block = match[2];
+    const modId = normalizedModId(tomlValue(block, 'modId'));
+    if (!modId || PLATFORM_DEPENDENCY_IDS.has(modId)) continue;
+
+    const mandatoryText = tomlValue(block, 'mandatory').toLowerCase();
+    const type = tomlValue(block, 'type').toLowerCase();
+    const side = tomlValue(block, 'side').toLowerCase();
+    const required = mandatoryText
+      ? mandatoryText === 'true'
+      : !type || ['required', 'required_client', 'required-server', 'required_server'].includes(type);
+    const clientRelevant = !side || ['both', 'client'].includes(side);
+    if (required && clientRelevant) dependencies.push(modId);
+  }
+  return uniqueModIds(dependencies);
+}
+
 function parseNeoForgeMetadata(text, manifestText, loader = 'NeoForge') {
   const source = String(text || '');
-  const sectionMatch = source.match(/\[\[mods\]\]([\s\S]*?)(?=\n\s*\[\[|$)/i);
-  const section = sectionMatch?.[1] || source;
+  const sections = [...source.matchAll(/\[\[mods\]\]([\s\S]*?)(?=\n\s*\[\[|$)/gi)]
+    .map((match) => match[1]);
+  const section = sections[0] || source;
+  const providedModIds = uniqueModIds(sections.map((item) => tomlValue(item, 'modId')));
+  const modId = normalizedModId(tomlValue(section, 'modId'));
+  if (modId && !providedModIds.includes(modId)) providedModIds.unshift(modId);
   let version = tomlValue(section, 'version');
   if (/^\$\{file\.jarVersion\}$/i.test(version)) {
     version = manifestValue(manifestText, 'Implementation-Version')
@@ -106,7 +174,9 @@ function parseNeoForgeMetadata(text, manifestText, loader = 'NeoForge') {
   }
   return {
     loader,
-    modId: tomlValue(section, 'modId'),
+    modId,
+    providedModIds,
+    dependencies: parseNeoForgeDependencies(source, providedModIds),
     name: tomlValue(section, 'displayName'),
     version,
     description: tomlMultilineValue(section, 'description'),
@@ -116,9 +186,12 @@ function parseNeoForgeMetadata(text, manifestText, loader = 'NeoForge') {
 
 function parseFabricMetadata(text) {
   const data = JSON.parse(text);
+  const modId = normalizedModId(data.id);
   return {
     loader: 'Fabric',
-    modId: String(data.id || ''),
+    modId,
+    providedModIds: uniqueModIds([modId, ...(Array.isArray(data.provides) ? data.provides : [])]),
+    dependencies: uniqueModIds(dependencyIdsFromObject(data.depends)),
     name: typeof data.name === 'string' ? data.name : '',
     version: String(data.version || ''),
     description: typeof data.description === 'string' ? data.description : '',
@@ -134,9 +207,12 @@ function parseQuiltMetadata(text) {
   const data = JSON.parse(text);
   const quilt = data.quilt_loader || {};
   const metadata = quilt.metadata || {};
+  const modId = normalizedModId(quilt.id);
   return {
     loader: 'Quilt',
-    modId: String(quilt.id || ''),
+    modId,
+    providedModIds: uniqueModIds([modId, ...dependencyIdsFromObject(quilt.provides)]),
+    dependencies: uniqueModIds(dependencyIdsFromObject(quilt.depends)),
     name: typeof metadata.name === 'string' ? metadata.name : '',
     version: String(quilt.version || ''),
     description: typeof metadata.description === 'string' ? metadata.description : '',
@@ -167,7 +243,9 @@ async function inspectModJar(file, fileName, { includeIcon = true } = {}) {
     version: '',
     description: '',
     loader: 'Неизвестно',
-    iconDataUrl: ''
+    iconDataUrl: '',
+    providedModIds: [],
+    dependencies: []
   };
 
   let zipfile;
@@ -224,7 +302,9 @@ async function inspectModJar(file, fileName, { includeIcon = true } = {}) {
 
     const result = { ...fallback, ...(parsed || {}) };
     result.name = String(result.name || fallback.name).trim().slice(0, 160);
-    result.modId = String(result.modId || '').trim().slice(0, 160);
+    result.modId = normalizedModId(result.modId).slice(0, 160);
+    result.providedModIds = uniqueModIds([result.modId, ...(Array.isArray(result.providedModIds) ? result.providedModIds : [])]).slice(0, 32);
+    result.dependencies = uniqueModIds(Array.isArray(result.dependencies) ? result.dependencies : []).slice(0, 128);
     result.version = String(result.version || manifestValue(manifestText, 'Implementation-Version') || '').trim().slice(0, 120);
     result.description = String(result.description || '').replace(/\s+/g, ' ').trim().slice(0, 420);
 
@@ -293,14 +373,15 @@ function metadataCacheFile(gameDirectory) {
 async function readMetadataCache(gameDirectory) {
   try {
     const data = JSON.parse(await fs.readFile(metadataCacheFile(gameDirectory), 'utf8'));
-    return data && typeof data.entries === 'object' ? data.entries : {};
+    if (data?.schemaVersion !== METADATA_CACHE_SCHEMA_VERSION || typeof data.entries !== 'object') return {};
+    return data.entries;
   } catch {
     return {};
   }
 }
 
 async function writeMetadataCache(gameDirectory, entries) {
-  await writeJsonAtomic(metadataCacheFile(gameDirectory), { schemaVersion: 1, entries });
+  await writeJsonAtomic(metadataCacheFile(gameDirectory), { schemaVersion: METADATA_CACHE_SCHEMA_VERSION, entries });
 }
 
 async function listMods(gameDirectory, { includeIcons = true } = {}) {
@@ -361,6 +442,86 @@ async function listMods(gameDirectory, { includeIcons = true } = {}) {
   };
 }
 
+function providedIdsFor(mod) {
+  return uniqueModIds([mod?.modId, ...(Array.isArray(mod?.providedModIds) ? mod.providedModIds : [])]);
+}
+
+function dependencyIdsFor(mod) {
+  return uniqueModIds(Array.isArray(mod?.dependencies) ? mod.dependencies : []);
+}
+
+function publicModReference(mod) {
+  return {
+    fileName: mod.fileName,
+    activeFileName: mod.activeFileName,
+    name: mod.name || fallbackName(mod.activeFileName),
+    modId: mod.modId || '',
+    providedModIds: providedIdsFor(mod),
+    dependencies: dependencyIdsFor(mod),
+    enabled: Boolean(mod.enabled)
+  };
+}
+
+function findMod(snapshot, requestedFileName) {
+  const activeName = activeNameFor(normalizeModFileName(requestedFileName)).toLowerCase();
+  return snapshot.mods.find((mod) => mod.activeFileName.toLowerCase() === activeName) || null;
+}
+
+function findDependentMods(snapshot, target, { enabledOnly = true } = {}) {
+  const candidates = snapshot.mods.filter((mod) => mod !== target && (!enabledOnly || mod.enabled));
+  const discovered = new Map();
+  const direct = [];
+  let frontier = new Set(providedIdsFor(target));
+  const visitedIds = new Set(frontier);
+  let depth = 0;
+
+  while (frontier.size) {
+    const next = new Set();
+    for (const mod of candidates) {
+      const key = mod.activeFileName.toLowerCase();
+      if (discovered.has(key)) continue;
+      const matching = dependencyIdsFor(mod).filter((id) => frontier.has(id));
+      if (!matching.length) continue;
+      const reference = { ...publicModReference(mod), dependencyDepth: depth + 1, dependsOn: matching };
+      discovered.set(key, reference);
+      if (depth === 0) direct.push(reference);
+      for (const id of providedIdsFor(mod)) {
+        if (!visitedIds.has(id)) {
+          visitedIds.add(id);
+          next.add(id);
+        }
+      }
+    }
+    frontier = next;
+    depth += 1;
+  }
+
+  return {
+    directDependents: direct,
+    dependents: [...discovered.values()].sort((a, b) => a.dependencyDepth - b.dependencyDepth || a.name.localeCompare(b.name, 'ru'))
+  };
+}
+
+async function analyzeModToggle(gameDirectory, requestedFileName, enabled) {
+  const snapshot = await listMods(gameDirectory, { includeIcons: false });
+  const target = findMod(snapshot, requestedFileName);
+  if (!target) throw new Error('Файл мода больше не существует. Обнови список модов.');
+  if (enabled || !target.enabled) {
+    return {
+      target: publicModReference(target),
+      directDependents: [],
+      dependents: [],
+      requiresConfirmation: false
+    };
+  }
+  const graph = findDependentMods(snapshot, target, { enabledOnly: true });
+  return {
+    target: publicModReference(target),
+    ...graph,
+    requiresConfirmation: graph.dependents.length > 0
+  };
+}
+
 function registryFile(gameDirectory) {
   return path.join(gameDirectory, '.tech-adventure-launcher', 'disabled-mods.json');
 }
@@ -396,42 +557,77 @@ function samePreference(entry, pathValue, modId) {
     || (modId && entry.modId && entry.modId.toLowerCase() === modId.toLowerCase());
 }
 
-async function toggleMod(gameDirectory, requestedFileName, enabled) {
-  const fileName = normalizeModFileName(requestedFileName);
+async function toggleMods(gameDirectory, requestedFileNames, enabled) {
+  const requested = [...new Set((Array.isArray(requestedFileNames) ? requestedFileNames : [requestedFileNames])
+    .map((value) => activeNameFor(normalizeModFileName(value)).toLowerCase()))];
+  if (!requested.length) return { results: [], summary: await countMods(gameDirectory) };
+
+  const snapshot = await listMods(gameDirectory, { includeIcons: false });
+  const byName = new Map(snapshot.mods.map((mod) => [mod.activeFileName.toLowerCase(), mod]));
+  const selected = requested.map((name) => {
+    const mod = byName.get(name);
+    if (!mod) throw new Error(`Файл мода ${name} больше не существует. Обнови список модов.`);
+    return mod;
+  });
   const modsDirectory = path.join(gameDirectory, 'mods');
-  const activeName = activeNameFor(fileName);
-  const activeFile = path.join(modsDirectory, activeName);
-  const disabledFile = path.join(modsDirectory, disabledNameFor(activeName));
-  const activeExists = await exists(activeFile);
-  const disabledExists = await exists(disabledFile);
-  if (!activeExists && !disabledExists) throw new Error('Файл мода больше не существует. Обнови список модов.');
-  if (activeExists && disabledExists) throw new Error('Обнаружены одновременно включённая и выключенная копии мода. Удали дубликат вручную.');
-
-  const currentFile = activeExists ? activeFile : disabledFile;
-  const metadata = await inspectModJar(currentFile, activeName, { includeIcon: false });
-  const relativePath = `mods/${activeName}`;
   const registry = await readDisabledRegistry(gameDirectory);
+  const renamed = [];
+  const results = [];
 
-  if (enabled) {
-    if (disabledExists) await fs.rename(disabledFile, activeFile);
-    registry.entries = registry.entries.filter((entry) => !samePreference(entry, relativePath, metadata.modId));
-  } else {
-    if (activeExists) await fs.rename(activeFile, disabledFile);
-    registry.entries = registry.entries.filter((entry) => !samePreference(entry, relativePath, metadata.modId));
-    registry.entries.push({
-      path: relativePath,
-      modId: metadata.modId || '',
-      disabledAt: new Date().toISOString()
-    });
+  try {
+    for (const mod of selected) {
+      const activeFile = path.join(modsDirectory, mod.activeFileName);
+      const disabledFile = path.join(modsDirectory, disabledNameFor(mod.activeFileName));
+      const activeExists = await exists(activeFile);
+      const disabledExists = await exists(disabledFile);
+      if (activeExists && disabledExists) {
+        throw new Error(`Обнаружены одновременно включённая и выключенная копии ${mod.name}. Удали дубликат вручную.`);
+      }
+      if (!activeExists && !disabledExists) throw new Error(`Файл мода ${mod.name} больше не существует.`);
+      if (Boolean(mod.enabled) !== Boolean(enabled)) {
+        const source = enabled ? disabledFile : activeFile;
+        const destination = enabled ? activeFile : disabledFile;
+        await fs.rename(source, destination);
+        renamed.push({ source: destination, destination: source });
+      }
+
+      const relativePath = `mods/${mod.activeFileName}`;
+      registry.entries = registry.entries.filter((entry) => !samePreference(entry, relativePath, mod.modId));
+      if (!enabled) {
+        registry.entries.push({
+          path: relativePath,
+          modId: mod.modId || '',
+          disabledAt: new Date().toISOString()
+        });
+      }
+      results.push({
+        fileName: enabled ? mod.activeFileName : disabledNameFor(mod.activeFileName),
+        activeFileName: mod.activeFileName,
+        enabled: Boolean(enabled),
+        modId: mod.modId || '',
+        name: mod.name || fallbackName(mod.activeFileName)
+      });
+    }
+    await writeDisabledRegistry(gameDirectory, registry);
+  } catch (error) {
+    for (const operation of renamed.reverse()) {
+      await fs.rename(operation.source, operation.destination).catch(() => {});
+    }
+    throw error;
   }
-  await writeDisabledRegistry(gameDirectory, registry);
-  return {
-    fileName: enabled ? activeName : disabledNameFor(activeName),
-    activeFileName: activeName,
-    enabled: Boolean(enabled),
-    modId: metadata.modId || '',
-    name: metadata.name || fallbackName(activeName)
-  };
+
+  return { results, summary: await countMods(gameDirectory) };
+}
+
+async function toggleMod(gameDirectory, requestedFileName, enabled) {
+  const response = await toggleMods(gameDirectory, [requestedFileName], enabled);
+  return response.results[0];
+}
+
+async function setAllMods(gameDirectory, enabled) {
+  const snapshot = await listMods(gameDirectory, { includeIcons: false });
+  const files = snapshot.mods.filter((mod) => mod.enabled !== Boolean(enabled)).map((mod) => mod.fileName);
+  return toggleMods(gameDirectory, files, enabled);
 }
 
 async function reapplyDisabledMods(gameDirectory) {
@@ -484,6 +680,10 @@ module.exports = {
   countMods,
   listMods,
   readDisabledRegistry,
+  findDependentMods,
+  analyzeModToggle,
+  toggleMods,
   toggleMod,
+  setAllMods,
   reapplyDisabledMods
 };

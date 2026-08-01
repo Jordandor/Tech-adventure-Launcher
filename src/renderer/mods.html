@@ -45,10 +45,16 @@
             <span>⌕</span>
             <input id="search-input" type="search" autocomplete="off" spellcheck="false" placeholder="Поиск по названию, ID или имени файла">
           </label>
-          <div class="filters" role="tablist" aria-label="Фильтр модов">
-            <button class="filter active" data-filter="all" type="button">Все <span id="total-count">—</span></button>
-            <button class="filter" data-filter="enabled" type="button">Включены <span id="enabled-count">—</span></button>
-            <button class="filter" data-filter="disabled" type="button">Выключены <span id="disabled-count">—</span></button>
+          <div class="toolbar-right">
+            <div class="bulk-actions" aria-label="Массовое управление модами">
+              <button id="enable-all" class="bulk-button enable" type="button">Включить все</button>
+              <button id="disable-all" class="bulk-button disable" type="button">Выключить все</button>
+            </div>
+            <div class="filters" role="tablist" aria-label="Фильтр модов">
+              <button class="filter active" data-filter="all" type="button">Все <span id="total-count">—</span></button>
+              <button class="filter" data-filter="enabled" type="button">Включены <span id="enabled-count">—</span></button>
+              <button class="filter" data-filter="disabled" type="button">Выключены <span id="disabled-count">—</span></button>
+            </div>
           </div>
         </section>
 
@@ -76,6 +82,19 @@
           <span>Файлы выключаются переименованием в <code>.jar.disabled</code></span>
         </footer>
       </main>
+    </div>
+    <div class="modal-backdrop hidden" id="decision-modal">
+      <section class="decision-modal" role="dialog" aria-modal="true" aria-labelledby="decision-title">
+        <span class="eyebrow" id="decision-kicker">ПРОВЕРКА ЗАВИСИМОСТЕЙ</span>
+        <h2 id="decision-title">Подтверди действие</h2>
+        <p id="decision-message"></p>
+        <div class="decision-list hidden" id="decision-list"></div>
+        <div class="decision-actions">
+          <button id="decision-cancel" class="decision-button cancel" type="button">Отмена</button>
+          <button id="decision-primary" class="decision-button primary" type="button">Продолжить</button>
+          <button id="decision-secondary" class="decision-button danger hidden" type="button">Продолжить</button>
+        </div>
+      </section>
     </div>
     <div class="toast hidden" id="toast"></div>
     <script src="mods.js"></script>
