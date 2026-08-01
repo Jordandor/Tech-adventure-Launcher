@@ -17,7 +17,7 @@ const {
 } = require('./manifest');
 const { writeJsonAtomic } = require('./settings');
 
-const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.6';
+const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.7';
 const MAX_ZIP_ENTRIES = 50000;
 
 async function exists(file) {

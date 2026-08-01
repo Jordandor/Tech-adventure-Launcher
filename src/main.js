@@ -18,6 +18,13 @@ const { createOfflineSession } = require('./core/offline-profile');
 const { syncPack } = require('./core/synchronizer');
 const { ensureRuntimeBootstrap } = require('./core/runtime-bootstrap');
 const { ensureMinecraft, inspectRuntimeState, launchMinecraft } = require('./core/minecraft');
+const { loadPackRegistry, getPack, publicPack } = require('./core/pack-registry');
+const {
+  readCachedPackSummary,
+  loadLatestPackSummary,
+  writeCachedPackSummary
+} = require('./core/pack-info');
+const { pingMinecraftServer } = require('./core/server-status');
 
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) app.quit();
@@ -25,16 +32,27 @@ if (!singleInstanceLock) app.quit();
 let mainWindow = null;
 let settingsStore = null;
 let authManager = null;
+let packRegistry = null;
 let busyOperation = null;
 let currentRuntime = null;
 let gameRunning = false;
 let updateCheckTimer = null;
 let updateCheckInitialTimer = null;
+let packInfoTimer = null;
+let packInfoInitialTimer = null;
+let serverStatusTimer = null;
+let serverStatusInitialTimer = null;
 let updateCheckWasManual = false;
 let lastProgressLogKey = '';
 let lastProgressLogAt = 0;
+let packInfoRefreshInFlight = null;
+let serverStatusRefreshInFlight = null;
+let lastPackInfo = null;
+let lastServerStatus = null;
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const PACK_INFO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const SERVER_STATUS_INTERVAL_MS = 10 * 1000;
 
 async function countInstalledMods(gameDirectory) {
   try {
@@ -52,6 +70,29 @@ function resourcePath(...parts) {
 
 function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+function activePack(settings = settingsStore?.get()) {
+  return getPack(packRegistry, settings?.activePackId);
+}
+
+function effectivePackSettings(settings = settingsStore.get()) {
+  const pack = activePack(settings);
+  if (!pack) return settings;
+  return {
+    ...settings,
+    activePackId: pack.id,
+    packName: pack.name || settings.packName,
+    manifestUrl: settings.manifestUrl || pack.manifestUrl,
+    runtimeManifestUrl: settings.runtimeManifestUrl || pack.runtimeManifestUrl,
+    minecraftVersion: settings.minecraftVersion || pack.minecraftVersion,
+    neoForgeVersion: settings.neoForgeVersion || pack.neoForgeVersion,
+    serverAddress: settings.serverAddress || pack.serverAddress
+  };
+}
+
+function packInfoCacheDirectory() {
+  return path.join(app.getPath('userData'), 'pack-info');
 }
 
 function collectErrorMessages(error, result = [], seen = new Set()) {
@@ -159,17 +200,186 @@ async function runExclusive(name, operation) {
   }
 }
 
+async function cachedPackInfoFor(pack) {
+  if (!pack) return null;
+  if (lastPackInfo?.packId === pack.id) return structuredClone(lastPackInfo);
+  const cached = await readCachedPackSummary(packInfoCacheDirectory(), pack.id);
+  return cached ? { ...cached, packId: pack.id } : null;
+}
+
 async function loadState() {
-  const settings = settingsStore.get();
+  const storedSettings = settingsStore.get();
+  const settings = effectivePackSettings(storedSettings);
+  const pack = activePack(storedSettings);
   return {
     appVersion: app.getVersion(),
     packaged: app.isPackaged,
     settings,
+    packs: packRegistry.packs.map(publicPack),
+    activePack: publicPack(pack),
+    packInfo: await cachedPackInfoFor(pack),
+    serverStatus: lastServerStatus?.packId === pack?.id ? structuredClone(lastServerStatus) : null,
     auth: authManager.publicState(),
     runtime: await inspectRuntimeState(settings.gameDirectory),
     modCount: await countInstalledMods(settings.gameDirectory),
     gameRunning
   };
+}
+
+async function refreshPackInfo() {
+  if (packInfoRefreshInFlight) return packInfoRefreshInFlight;
+  packInfoRefreshInFlight = (async () => {
+    const storedSettings = settingsStore.get();
+    const settings = effectivePackSettings(storedSettings);
+    const pack = activePack(storedSettings);
+    if (!pack || !settings.manifestUrl) return null;
+
+    try {
+      const result = await loadLatestPackSummary({
+        manifestUrl: settings.manifestUrl,
+        cacheDirectory: packInfoCacheDirectory(),
+        fallback: {
+          id: pack.id,
+          name: pack.name,
+          minecraftVersion: pack.minecraftVersion,
+          neoForgeVersion: pack.neoForgeVersion,
+          serverAddress: settings.serverAddress || pack.serverAddress
+        }
+      });
+      lastPackInfo = { ...result, packId: pack.id };
+      send('launcher:pack-info', {
+        ...result.pack,
+        packId: pack.id,
+        fetchedAt: result.fetchedAt,
+        fromCache: result.fromCache,
+        stale: result.stale
+      });
+      if (result.warning) {
+        await appendLauncherLog(`[launcher:pack-info] ${result.warning}\n`);
+      }
+      return lastPackInfo;
+    } catch (error) {
+      const message = errorMessage(error);
+      await appendLauncherLog(`[launcher:pack-info] ${message}\n`);
+      send('launcher:pack-info', {
+        id: pack.id,
+        packId: pack.id,
+        name: pack.name,
+        minecraftVersion: pack.minecraftVersion,
+        neoForgeVersion: pack.neoForgeVersion,
+        unavailable: true,
+        error: message
+      });
+      return null;
+    }
+  })().finally(() => {
+    packInfoRefreshInFlight = null;
+  });
+  return packInfoRefreshInFlight;
+}
+
+async function refreshServerStatus() {
+  if (serverStatusRefreshInFlight) return serverStatusRefreshInFlight;
+  serverStatusRefreshInFlight = (async () => {
+    const settings = effectivePackSettings();
+    const pack = activePack();
+    if (!pack) return null;
+    if (!settings.serverAddress) {
+      lastServerStatus = {
+        packId: pack.id,
+        reachable: false,
+        configured: false,
+        checkedAt: new Date().toISOString()
+      };
+      send('server:status', lastServerStatus);
+      return lastServerStatus;
+    }
+
+    try {
+      const status = await pingMinecraftServer(settings.serverAddress, { timeoutMs: 5000 });
+      lastServerStatus = {
+        ...status,
+        packId: pack.id,
+        configured: true
+      };
+    } catch (error) {
+      lastServerStatus = {
+        packId: pack.id,
+        reachable: false,
+        configured: true,
+        checkedAt: new Date().toISOString(),
+        error: errorMessage(error)
+      };
+    }
+    send('server:status', lastServerStatus);
+    return lastServerStatus;
+  })().finally(() => {
+    serverStatusRefreshInFlight = null;
+  });
+  return serverStatusRefreshInFlight;
+}
+
+function clearScheduledPackServices() {
+  if (packInfoTimer) clearInterval(packInfoTimer);
+  if (packInfoInitialTimer) clearTimeout(packInfoInitialTimer);
+  if (serverStatusTimer) clearInterval(serverStatusTimer);
+  if (serverStatusInitialTimer) clearTimeout(serverStatusInitialTimer);
+  packInfoTimer = null;
+  packInfoInitialTimer = null;
+  serverStatusTimer = null;
+  serverStatusInitialTimer = null;
+}
+
+function schedulePackServices() {
+  clearScheduledPackServices();
+  packInfoInitialTimer = setTimeout(() => {
+    packInfoInitialTimer = null;
+    refreshPackInfo().catch(() => {});
+  }, 250);
+  packInfoInitialTimer.unref?.();
+  packInfoTimer = setInterval(() => refreshPackInfo().catch(() => {}), PACK_INFO_REFRESH_INTERVAL_MS);
+  packInfoTimer.unref?.();
+
+  serverStatusInitialTimer = setTimeout(() => {
+    serverStatusInitialTimer = null;
+    refreshServerStatus().catch(() => {});
+  }, 450);
+  serverStatusInitialTimer.unref?.();
+  serverStatusTimer = setInterval(() => refreshServerStatus().catch(() => {}), SERVER_STATUS_INTERVAL_MS);
+  serverStatusTimer.unref?.();
+}
+
+async function selectPack(packId) {
+  if (busyOperation || gameRunning) {
+    throw new Error('Нельзя переключать сборку во время проверки файлов или работы Minecraft.');
+  }
+  const target = getPack(packRegistry, packId);
+  if (!target || target.id !== packId) throw new Error('Выбранная сборка отсутствует в реестре.');
+
+  const current = settingsStore.get();
+  const directories = { ...(current.packDirectories || {}) };
+  directories[current.activePackId] = current.gameDirectory;
+  const defaultTargetDirectory = target.id === packRegistry.defaultPackId
+    ? path.join(app.getPath('userData'), 'game')
+    : path.join(app.getPath('userData'), 'packs', target.id);
+  const targetDirectory = directories[target.id] || defaultTargetDirectory;
+
+  await settingsStore.update({
+    activePackId: target.id,
+    packDirectories: directories,
+    packName: target.name,
+    manifestUrl: target.manifestUrl,
+    runtimeManifestUrl: target.runtimeManifestUrl,
+    minecraftVersion: target.minecraftVersion,
+    neoForgeVersion: target.neoForgeVersion,
+    serverAddress: target.serverAddress,
+    gameDirectory: targetDirectory
+  });
+  currentRuntime = null;
+  lastPackInfo = null;
+  lastServerStatus = null;
+  schedulePackServices();
+  return loadState();
 }
 
 async function openMicrosoftLogin() {
@@ -187,7 +397,7 @@ async function openMicrosoftLogin() {
 }
 
 async function preparePack(forcePackCheck) {
-  const settings = settingsStore.get();
+  const settings = effectivePackSettings();
   if (!settings.manifestUrl) {
     throw new Error('Сначала укажи GitHub-ссылку на манифест сборки в настройках лаунчера.');
   }
@@ -213,19 +423,33 @@ async function preparePack(forcePackCheck) {
   if (syncResult.warning) send('launcher:warning', { message: syncResult.warning });
   if (syncResult.manifest) {
     const modCount = await countInstalledMods(settings.gameDirectory);
-    send('launcher:pack-info', {
+    const info = {
       ...syncResult.manifest.pack,
+      serverAddress: syncResult.manifest.pack.serverAddress || settings.serverAddress,
       fileCount: syncResult.managedFileCount ?? syncResult.manifest.files.length,
-      modCount
-    });
+      modCount,
+      packId: settings.activePackId,
+      fetchedAt: new Date().toISOString(),
+      fromCache: Boolean(syncResult.fromCache),
+      stale: Boolean(syncResult.fromCache)
+    };
+    send('launcher:pack-info', info);
+    await writeCachedPackSummary(packInfoCacheDirectory(), info).catch(() => {});
+    lastPackInfo = {
+      packId: settings.activePackId,
+      pack: info,
+      fetchedAt: info.fetchedAt,
+      fromCache: info.fromCache,
+      stale: info.stale
+    };
   }
 
-  const pack = syncResult.manifest?.pack;
+  const manifestPack = syncResult.manifest?.pack;
   const effective = {
     ...settings,
-    minecraftVersion: pack?.minecraftVersion || settings.minecraftVersion,
-    neoForgeVersion: pack?.neoForgeVersion || settings.neoForgeVersion,
-    serverAddress: pack?.serverAddress || settings.serverAddress
+    minecraftVersion: manifestPack?.minecraftVersion || settings.minecraftVersion,
+    neoForgeVersion: manifestPack?.neoForgeVersion || settings.neoForgeVersion,
+    serverAddress: manifestPack?.serverAddress || settings.serverAddress
   };
 
   if (
@@ -363,11 +587,13 @@ function scheduleUpdateChecks() {
 
 function registerIpc() {
   ipcMain.handle('launcher:get-state', () => loadState());
+  ipcMain.handle('packs:select', (_event, packId) => selectPack(String(packId || '')));
   ipcMain.handle('settings:save', async (_event, patch) => {
     const saved = await settingsStore.update(patch || {});
     currentRuntime = null;
     scheduleUpdateChecks();
-    return saved;
+    schedulePackServices();
+    return effectivePackSettings(saved);
   });
   ipcMain.handle('dialog:choose-game-directory', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -402,7 +628,9 @@ function registerIpc() {
     };
   }));
   ipcMain.handle('launcher:play', () => performPlay());
-  ipcMain.handle('launcher:open-game-directory', () => shell.openPath(settingsStore.get().gameDirectory));
+  ipcMain.handle('launcher:refresh-pack-info', () => refreshPackInfo());
+  ipcMain.handle('launcher:refresh-server-status', () => refreshServerStatus());
+  ipcMain.handle('launcher:open-game-directory', () => shell.openPath(effectivePackSettings().gameDirectory));
   ipcMain.handle('launcher:open-logs', () => shell.openPath(path.join(app.getPath('userData'), 'logs')));
   ipcMain.handle('external:open', (_event, url) => {
     const parsed = new URL(url);
@@ -452,6 +680,7 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   const userData = app.getPath('userData');
+  packRegistry = await loadPackRegistry(resourcePath('resources', 'packs.json'));
   settingsStore = new SettingsStore({
     settingsPath: path.join(userData, 'settings.json'),
     defaultsPath: resourcePath('resources', 'launcher.defaults.json'),
@@ -466,6 +695,7 @@ app.whenReady().then(async () => {
   registerIpc();
   createWindow();
   scheduleUpdateChecks();
+  schedulePackServices();
 }).catch(async (error) => {
   await appendLauncherLog(`[launcher:start] ${errorDetails(error)}\n`);
   dialog.showErrorBox('Dekodev Reborn Launcher', errorMessage(error));
@@ -479,4 +709,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (updateCheckInitialTimer) clearTimeout(updateCheckInitialTimer);
+  clearScheduledPackServices();
 });

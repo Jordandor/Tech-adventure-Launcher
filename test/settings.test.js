@@ -156,3 +156,15 @@ test('SettingsStore сохраняет миграцию старых настр�
   const persisted = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
   assert.equal(persisted.neoForgeVersion, '21.1.235');
 });
+
+test('для каждой сборки сохраняется отдельная игровая папка', () => {
+  const result = normalizeSettings({
+    activePackId: 'tech-adventure',
+    gameDirectory: '/tmp/tech-adventure',
+    packDirectories: { another: '/tmp/another-pack' }
+  }, { ...defaults, activePackId: 'tech-adventure' }, defaultGameDirectory);
+
+  assert.equal(result.activePackId, 'tech-adventure');
+  assert.equal(result.packDirectories['tech-adventure'], path.resolve('/tmp/tech-adventure'));
+  assert.equal(result.packDirectories.another, path.resolve('/tmp/another-pack'));
+});

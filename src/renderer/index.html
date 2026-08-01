@@ -29,6 +29,20 @@
             <span>REBORN</span>
           </div>
         </div>
+
+        <section class="pack-switcher" id="pack-switcher">
+          <span class="sidebar-section-label">СБОРКИ</span>
+          <button class="pack-selector" id="pack-selector" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <span class="pack-selector-mark">◆</span>
+            <span class="pack-selector-copy">
+              <strong id="selected-pack-name">Tech Adventure</strong>
+              <small id="selected-pack-caption">Выбранная сборка</small>
+            </span>
+            <span class="pack-selector-arrow">⌄</span>
+          </button>
+          <div class="pack-menu" id="pack-menu" role="listbox" aria-label="Доступные сборки"></div>
+        </section>
+
         <nav class="main-nav" aria-label="Разделы">
           <button class="nav-item active" data-view="home" type="button">
             <span class="nav-icon">◆</span><span>Главная</span>
@@ -50,13 +64,13 @@
       </aside>
 
       <main class="content">
-        <section class="view active" id="view-home">
+        <section class="view active pack-view" id="view-home">
           <div class="hero">
             <div class="hero-grid"></div>
             <div class="hero-copy">
-              <span class="eyebrow">СОБСТВЕННАЯ СБОРКА · NEOFORGE</span>
+              <span class="eyebrow" id="pack-eyebrow">СОБСТВЕННАЯ СБОРКА · NEOFORGE</span>
               <h1 id="pack-title">Tech Adventure</h1>
-              <p>Механизмы, исследования, колонии и путешествия между мирами — в одной автоматически обновляемой сборке.</p>
+              <p id="pack-description">Механизмы, исследования, колонии и путешествия между мирами — в одной автоматически обновляемой сборке.</p>
               <div class="pack-tags">
                 <span id="minecraft-tag">Minecraft 1.21.1</span>
                 <span id="neoforge-tag">NeoForge 21.1.235</span>
@@ -70,7 +84,7 @@
             </div>
           </div>
 
-          <div class="home-grid">
+          <div class="home-grid profile-grid">
             <section class="panel auth-panel">
               <div class="panel-heading">
                 <div>
@@ -106,43 +120,59 @@
               </div>
             </section>
 
+            <section class="panel server-panel" aria-live="polite">
+              <div class="server-panel-head">
+                <span class="section-kicker">ИГРОКИ ОНЛАЙН</span>
+                <span class="server-live-dot checking" id="server-live-dot"></span>
+              </div>
+              <div class="server-count-wrap">
+                <strong id="server-player-count">—</strong>
+                <span id="server-player-limit">из —</span>
+              </div>
+              <h2 id="server-status-title">Проверяю количество игроков…</h2>
+              <p id="server-status-detail">Данные обновляются каждые 10 секунд.</p>
+            </section>
+          </div>
+
+          <div class="home-grid action-grid">
+            <section class="launch-panel">
+              <div class="progress-copy">
+                <div class="progress-line">
+                  <strong id="progress-title">Всё готово</strong>
+                  <span id="progress-percent">100%</span>
+                </div>
+                <div class="progress-track"><div id="progress-bar" style="width:100%"></div></div>
+                <p id="progress-detail">Выбери способ входа и запускай игру.</p>
+              </div>
+              <div class="launch-actions">
+                <button id="verify-button" class="secondary-button" type="button">Проверить файлы</button>
+                <button id="play-button" class="play-button" type="button">
+                  <span class="play-triangle">▶</span>
+                  <span><strong>ИГРАТЬ</strong><small id="server-caption">Запуск сборки</small></span>
+                </button>
+              </div>
+            </section>
+
             <section class="panel news-panel">
               <div class="panel-heading compact">
                 <div>
                   <span class="section-kicker">ОБНОВЛЕНИЕ СБОРКИ</span>
-                  <h2 id="pack-version">Версия не загружена</h2>
+                  <h2 id="pack-version">Загружаю версию…</h2>
                 </div>
-                <span class="live-dot"></span>
+                <span class="live-dot" id="pack-info-dot"></span>
               </div>
-              <p id="pack-news">После подключения GitHub-манифеста здесь появятся версия и новости сборки.</p>
+              <p id="pack-news">Получаю актуальные сведения из GitHub.</p>
+              <span class="pack-info-caption" id="pack-info-caption">Проверка выполняется при запуске лаунчера.</span>
               <button id="open-pack-folder" class="inline-link" type="button">Открыть папку сборки <span>↗</span></button>
             </section>
           </div>
-
-          <section class="launch-panel">
-            <div class="progress-copy">
-              <div class="progress-line">
-                <strong id="progress-title">Всё готово</strong>
-                <span id="progress-percent">100%</span>
-              </div>
-              <div class="progress-track"><div id="progress-bar" style="width:100%"></div></div>
-              <p id="progress-detail">Выбери способ входа и запускай игру.</p>
-            </div>
-            <div class="launch-actions">
-              <button id="verify-button" class="secondary-button" type="button">Проверить файлы</button>
-              <button id="play-button" class="play-button" type="button">
-                <span class="play-triangle">▶</span>
-                <span><strong>ИГРАТЬ</strong><small id="server-caption">Запуск сборки</small></span>
-              </button>
-            </div>
-          </section>
         </section>
 
         <section class="view" id="view-settings">
           <div class="page-heading">
             <span class="section-kicker">КОНФИГУРАЦИЯ</span>
             <h1>Настройки лаунчера</h1>
-            <p>Эти параметры сохраняются только на этом компьютере.</p>
+            <p>Эти параметры сохраняются только на этом компьютере и относятся к выбранной сборке.</p>
           </div>
           <form id="settings-form" class="settings-layout">
             <section class="panel settings-card">

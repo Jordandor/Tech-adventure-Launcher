@@ -3,6 +3,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+
 function asBoolean(value, fallback) {
   return typeof value === 'boolean' ? value : fallback;
 }
@@ -10,6 +12,13 @@ function asBoolean(value, fallback) {
 function asMemory(value, fallback) {
   const number = Number(value);
   return Number.isInteger(number) && number >= 1024 && number <= 65536 ? number : fallback;
+}
+
+function normalizePackId(value, fallback = 'tech-adventure') {
+  const text = String(value || '').trim();
+  if (PACK_ID_PATTERN.test(text)) return text;
+  const safeFallback = String(fallback || 'tech-adventure').trim();
+  return PACK_ID_PATTERN.test(safeFallback) ? safeFallback : 'tech-adventure';
 }
 
 function normalizeOptionalHttpsUrl(value, label) {
@@ -64,6 +73,18 @@ function profileSkinUrl(profile) {
   return normalizeMinecraftSkinUrl(active?.url);
 }
 
+function normalizePackDirectories(rawDirectories) {
+  if (!rawDirectories || typeof rawDirectories !== 'object' || Array.isArray(rawDirectories)) return {};
+  const result = {};
+  for (const [rawId, rawDirectory] of Object.entries(rawDirectories)) {
+    const id = String(rawId || '').trim();
+    const directory = String(rawDirectory || '').trim();
+    if (!PACK_ID_PATTERN.test(id) || !directory) continue;
+    result[id] = path.resolve(directory);
+  }
+  return result;
+}
+
 function migrateSavedSettings(saved, defaults) {
   const migrated = saved && typeof saved === 'object' ? { ...saved } : {};
 
@@ -89,6 +110,10 @@ function migrateSavedSettings(saved, defaults) {
     migrated.runtimeManifestUrl = defaults.runtimeManifestUrl;
   }
 
+  if (!String(migrated.activePackId || '').trim()) {
+    migrated.activePackId = defaults.activePackId || 'tech-adventure';
+  }
+
   return migrated;
 }
 
@@ -100,8 +125,12 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
     throw new Error('Максимальный объём памяти не может быть меньше минимального.');
   }
 
+  const activePackId = normalizePackId(source.activePackId, defaults.activePackId);
   const gameDirectoryInput = String(source.gameDirectory ?? '').trim();
   const gameDirectory = path.resolve(gameDirectoryInput || defaultGameDirectory);
+  const packDirectories = normalizePackDirectories(source.packDirectories);
+  packDirectories[activePackId] = gameDirectory;
+
   const manifestUrl = String(source.manifestUrl || '').trim()
     || String(defaults.manifestUrl || '').trim();
   const runtimeManifestUrl = String(source.runtimeManifestUrl || '').trim()
@@ -110,6 +139,8 @@ function normalizeSettings(input, defaults, defaultGameDirectory) {
     || String(defaults.updateRepository || '').trim();
 
   return {
+    activePackId,
+    packDirectories,
     packName: String(source.packName || 'Tech Adventure').trim().slice(0, 80),
     minecraftVersion: String(source.minecraftVersion || '1.21.1').trim(),
     neoForgeVersion: String(source.neoForgeVersion || '21.1.235').trim(),
@@ -181,7 +212,10 @@ class SettingsStore {
 }
 
 module.exports = {
+  PACK_ID_PATTERN,
   SettingsStore,
+  normalizePackId,
+  normalizePackDirectories,
   normalizeSettings,
   normalizeOptionalHttpsUrl,
   normalizeUpdateRepository,

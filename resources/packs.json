@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "defaultPackId": "tech-adventure",
+  "packs": [
+    {
+      "id": "tech-adventure",
+      "name": "Tech Adventure",
+      "shortName": "Tech Adventure",
+      "eyebrow": "СОБСТВЕННАЯ СБОРКА · NEOFORGE",
+      "description": "Механизмы, исследования, колонии и путешествия между мирами — в одной автоматически обновляемой сборке.",
+      "manifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure/main/pack-manifest.json",
+      "runtimeManifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest-v2.json",
+      "minecraftVersion": "1.21.1",
+      "neoForgeVersion": "21.1.235",
+      "serverAddress": "45.152.160.143:25598",
+      "theme": {
+        "id": "tech-adventure",
+        "accent": "#b8e86d",
+        "accentBright": "#d7ff91",
+        "secondary": "#57b9a9",
+        "heroStart": "#0c191c",
+        "heroEnd": "#122523"
+      }
+    }
+  ]
+}

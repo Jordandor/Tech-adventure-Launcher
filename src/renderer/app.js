@@ -4,12 +4,26 @@ const byId = (id) => document.getElementById(id);
 
 const elements = {
   appVersion: byId('app-version'),
+  packSwitcher: byId('pack-switcher'),
+  packSelector: byId('pack-selector'),
+  packMenu: byId('pack-menu'),
+  selectedPackName: byId('selected-pack-name'),
+  selectedPackCaption: byId('selected-pack-caption'),
+  packEyebrow: byId('pack-eyebrow'),
   packTitle: byId('pack-title'),
+  packDescription: byId('pack-description'),
   minecraftTag: byId('minecraft-tag'),
   neoForgeTag: byId('neoforge-tag'),
   filesTag: byId('files-tag'),
   packVersion: byId('pack-version'),
   packNews: byId('pack-news'),
+  packInfoCaption: byId('pack-info-caption'),
+  packInfoDot: byId('pack-info-dot'),
+  serverPlayerCount: byId('server-player-count'),
+  serverPlayerLimit: byId('server-player-limit'),
+  serverStatusTitle: byId('server-status-title'),
+  serverStatusDetail: byId('server-status-detail'),
+  serverLiveDot: byId('server-live-dot'),
   offlineMode: byId('offline-mode'),
   microsoftMode: byId('microsoft-mode'),
   offlineAuth: byId('offline-auth'),
@@ -51,6 +65,7 @@ let logText = '[launcher] Ожидание запуска…\n';
 let avatarRequestId = 0;
 let gameExitWasCrash = false;
 let gameActive = false;
+let packMenuOpen = false;
 
 function showToast(message, type = 'normal', duration = 4800) {
   clearTimeout(toastTimer);
@@ -95,6 +110,15 @@ function russianModLabel(count) {
   if (last === 1) return 'мод';
   if (last >= 2 && last <= 4) return 'мода';
   return 'модов';
+}
+
+function russianPlayerLabel(count) {
+  const absolute = Math.abs(count) % 100;
+  const last = absolute % 10;
+  if (absolute > 10 && absolute < 20) return 'игроков';
+  if (last === 1) return 'игрок';
+  if (last >= 2 && last <= 4) return 'игрока';
+  return 'игроков';
 }
 
 function safeSkinUrl(profile) {
@@ -164,6 +188,7 @@ function setBusy(value, operation = '', failed = false, message = '') {
   elements.playButton.disabled = value;
   elements.verifyButton.disabled = value;
   elements.microsoftLogin.disabled = value;
+  elements.packSelector.disabled = value || gameActive;
   if (value) {
     setStatus(operation || 'Выполняется операция…', 'busy');
   } else if (failed) {
@@ -211,19 +236,137 @@ function renderAuth(auth) {
   }
 }
 
+function setPackMenuOpen(value) {
+  packMenuOpen = Boolean(value);
+  elements.packSwitcher.classList.toggle('open', packMenuOpen);
+  elements.packSelector.setAttribute('aria-expanded', String(packMenuOpen));
+}
+
+function applyPackTheme(pack) {
+  const theme = pack?.theme || {};
+  const root = document.documentElement;
+  const home = byId('view-home');
+  home.dataset.packTheme = theme.id || pack?.id || 'default';
+  root.style.setProperty('--pack-accent', theme.accent || '#b8e86d');
+  root.style.setProperty('--pack-accent-bright', theme.accentBright || '#d7ff91');
+  root.style.setProperty('--pack-secondary', theme.secondary || '#57b9a9');
+  root.style.setProperty('--pack-hero-start', theme.heroStart || '#0c191c');
+  root.style.setProperty('--pack-hero-end', theme.heroEnd || '#122523');
+}
+
+function renderPackDefinition(pack) {
+  if (!pack) return;
+  applyPackTheme(pack);
+  elements.selectedPackName.textContent = pack.shortName || pack.name;
+  elements.selectedPackCaption.textContent = 'Выбранная сборка';
+  elements.packEyebrow.textContent = pack.eyebrow || 'СОБСТВЕННАЯ СБОРКА';
+  elements.packTitle.textContent = pack.name || 'Minecraft Pack';
+  elements.packDescription.textContent = pack.description || '';
+  elements.minecraftTag.textContent = `Minecraft ${pack.minecraftVersion || '—'}`;
+  elements.neoForgeTag.textContent = `NeoForge ${pack.neoForgeVersion || '—'}`;
+  elements.serverCaption.textContent = `Запуск ${pack.shortName || pack.name}`;
+}
+
+function renderPackMenu(packs, activePackId) {
+  elements.packMenu.replaceChildren();
+  for (const pack of packs || []) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `pack-option${pack.id === activePackId ? ' active' : ''}`;
+    button.dataset.packId = pack.id;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(pack.id === activePackId));
+
+    const mark = document.createElement('span');
+    mark.className = 'pack-option-mark';
+    mark.textContent = '◆';
+    const copy = document.createElement('span');
+    copy.className = 'pack-option-copy';
+    const name = document.createElement('strong');
+    name.textContent = pack.shortName || pack.name;
+    const caption = document.createElement('small');
+    caption.textContent = pack.id === activePackId ? 'Выбрано' : 'Открыть сборку';
+    copy.append(name, caption);
+    button.append(mark, copy);
+    button.addEventListener('click', async () => {
+      setPackMenuOpen(false);
+      if (pack.id === state?.activePack?.id) return;
+      const nextState = await attempt(() => window.launcher.selectPack(pack.id));
+      if (!nextState) return;
+      applyState(nextState);
+      showToast(`Выбрана сборка ${nextState.activePack.name}.`);
+    });
+    elements.packMenu.append(button);
+  }
+}
+
 function renderPackInfo(pack) {
   if (!pack) return;
-  elements.packTitle.textContent = pack.name || state.settings.packName;
+  if (pack.packId && state?.activePack?.id && pack.packId !== state.activePack.id) return;
+  if (pack.name) elements.packTitle.textContent = pack.name;
+  if (pack.minecraftVersion) elements.minecraftTag.textContent = `Minecraft ${pack.minecraftVersion}`;
+  if (pack.neoForgeVersion) elements.neoForgeTag.textContent = `NeoForge ${pack.neoForgeVersion}`;
+
+  if (pack.unavailable && !pack.version) {
+    elements.packVersion.textContent = 'Версия временно недоступна';
+    elements.packNews.textContent = 'Не удалось получить актуальные сведения из GitHub.';
+    elements.packInfoCaption.textContent = 'Лаунчер повторит запрос автоматически.';
+    elements.packInfoDot.className = 'live-dot warning';
+    return;
+  }
+
   elements.packVersion.textContent = `Версия ${pack.version || 'не указана'}`;
   elements.packNews.textContent = pack.news || 'Сборка обновлена и готова к запуску.';
-  elements.minecraftTag.textContent = `Minecraft ${pack.minecraftVersion || state.settings.minecraftVersion}`;
-  elements.neoForgeTag.textContent = `NeoForge ${pack.neoForgeVersion || state.settings.neoForgeVersion}`;
+  elements.packInfoCaption.textContent = pack.stale || pack.fromCache
+    ? 'Показана последняя сохранённая версия. GitHub будет проверен повторно.'
+    : 'Актуальные сведения получены из GitHub при запуске.';
+  elements.packInfoDot.className = `live-dot${pack.stale || pack.fromCache ? ' warning' : ''}`;
+
   if (Number.isFinite(pack.modCount)) {
     elements.filesTag.textContent = `${pack.modCount} ${russianModLabel(pack.modCount)}`;
-  } else if (Number.isFinite(pack.fileCount)) {
+  } else if (Number.isFinite(pack.fileCount) && !Number.isFinite(state?.modCount)) {
     elements.filesTag.textContent = `${pack.fileCount} управляемых файлов`;
   }
-  if (pack.serverAddress) elements.serverCaption.textContent = pack.serverAddress;
+}
+
+function renderServerStatus(status) {
+  if (!status) {
+    elements.serverPlayerCount.textContent = '—';
+    elements.serverPlayerLimit.textContent = 'из —';
+    elements.serverStatusTitle.textContent = 'Проверяю количество игроков…';
+    elements.serverStatusDetail.textContent = 'Данные обновляются каждые 10 секунд.';
+    elements.serverLiveDot.className = 'server-live-dot checking';
+    return;
+  }
+  if (status.packId && state?.activePack?.id && status.packId !== state.activePack.id) return;
+  if (!status.configured) {
+    elements.serverPlayerCount.textContent = '—';
+    elements.serverPlayerLimit.textContent = '';
+    elements.serverStatusTitle.textContent = 'Статус сервера не настроен';
+    elements.serverStatusDetail.textContent = 'Укажи адрес сервера в настройках выбранной сборки.';
+    elements.serverLiveDot.className = 'server-live-dot offline';
+    return;
+  }
+  if (!status.reachable) {
+    elements.serverPlayerCount.textContent = '—';
+    elements.serverPlayerLimit.textContent = '';
+    elements.serverStatusTitle.textContent = 'Сервер сейчас недоступен';
+    elements.serverStatusDetail.textContent = 'Следующая автоматическая проверка — через 10 секунд.';
+    elements.serverLiveDot.className = 'server-live-dot offline';
+    return;
+  }
+
+  const online = Number(status.online || 0);
+  const max = Number(status.max || 0);
+  elements.serverPlayerCount.textContent = String(online);
+  elements.serverPlayerLimit.textContent = max > 0 ? `из ${max}` : '';
+  elements.serverStatusTitle.textContent = max > 0
+    ? `На сервере сейчас ${online} ${russianPlayerLabel(online)} из ${max}`
+    : `На сервере сейчас ${online} ${russianPlayerLabel(online)}`;
+  elements.serverStatusDetail.textContent = Number.isFinite(status.latencyMs)
+    ? `Обновляется каждые 10 секунд · отклик ${status.latencyMs} мс`
+    : 'Данные обновляются каждые 10 секунд.';
+  elements.serverLiveDot.className = 'server-live-dot online';
 }
 
 function hydrateSettings(settings) {
@@ -240,15 +383,12 @@ function hydrateSettings(settings) {
   byId('setting-update-repo').value = settings.updateRepository || '';
   byId('setting-auto-update').checked = Boolean(settings.autoUpdateLauncher);
   elements.offlineUsername.value = settings.offlineUsername || '';
-  elements.packTitle.textContent = settings.packName || 'Tech Adventure';
-  elements.minecraftTag.textContent = `Minecraft ${settings.minecraftVersion}`;
-  elements.neoForgeTag.textContent = `NeoForge ${settings.neoForgeVersion}`;
-  elements.serverCaption.textContent = settings.serverAddress || 'Запуск сборки';
   setAuthMode(settings.authMode, false);
 }
 
 function collectSettings() {
   return {
+    activePackId: state?.activePack?.id || state?.settings?.activePackId,
     manifestUrl: byId('setting-manifest').value.trim(),
     runtimeManifestUrl: byId('setting-runtime-manifest').value.trim(),
     minecraftVersion: byId('setting-minecraft').value.trim(),
@@ -368,12 +508,23 @@ function showUpdate(type, data = {}) {
   }
 }
 
-async function initialize() {
-  state = await attempt(() => window.launcher.getState());
-  if (!state) return;
+function applyState(nextState) {
+  state = nextState;
   elements.appVersion.textContent = `v${state.appVersion}`;
   hydrateSettings(state.settings);
+  renderPackDefinition(state.activePack);
+  renderPackMenu(state.packs, state.activePack?.id);
   renderAuth(state.auth);
+  renderServerStatus(state.serverStatus);
+  if (state.packInfo?.pack) {
+    renderPackInfo({
+      ...state.packInfo.pack,
+      packId: state.packInfo.packId,
+      fromCache: state.packInfo.fromCache,
+      stale: state.packInfo.stale,
+      fetchedAt: state.packInfo.fetchedAt
+    });
+  }
   if (Number.isFinite(state.modCount)) {
     elements.filesTag.textContent = `${state.modCount} ${russianModLabel(state.modCount)}`;
   }
@@ -382,9 +533,27 @@ async function initialize() {
   }
 }
 
+async function initialize() {
+  const initialState = await attempt(() => window.launcher.getState());
+  if (!initialState) return;
+  applyState(initialState);
+  window.launcher.refreshPackInfo().catch(() => {});
+  window.launcher.refreshServerStatus().catch(() => {});
+}
+
 document.querySelectorAll('.nav-item').forEach((button) => {
   button.addEventListener('click', () => showView(button.dataset.view));
 });
+
+elements.packSelector.addEventListener('click', () => setPackMenuOpen(!packMenuOpen));
+document.addEventListener('click', (event) => {
+  if (!elements.packSwitcher.contains(event.target)) setPackMenuOpen(false);
+});
+elements.packSwitcher.addEventListener('mouseenter', () => {
+  if ((state?.packs?.length || 0) > 1) setPackMenuOpen(true);
+});
+elements.packSwitcher.addEventListener('mouseleave', () => setPackMenuOpen(false));
+
 elements.offlineMode.addEventListener('click', () => setAuthMode('offline', true));
 elements.microsoftMode.addEventListener('click', () => setAuthMode('microsoft', true));
 
@@ -437,6 +606,8 @@ elements.settingsForm.addEventListener('submit', async (event) => {
   hydrateSettings(saved);
   elements.settingsResult.textContent = 'Настройки сохранены';
   setTimeout(() => { elements.settingsResult.textContent = ''; }, 3000);
+  window.launcher.refreshPackInfo().catch(() => {});
+  window.launcher.refreshServerStatus().catch(() => {});
 });
 
 byId('choose-game-dir').addEventListener('click', async () => {
@@ -460,6 +631,7 @@ window.launcher.onProgress(renderProgress);
 window.launcher.onBusy(({ busy: isBusy, operation, failed, message }) => setBusy(isBusy, operation, failed, message));
 window.launcher.onWarning(({ message }) => showToast(message, 'warning', 8000));
 window.launcher.onPackInfo((pack) => renderPackInfo(pack));
+window.launcher.onServerStatus((status) => renderServerStatus(status));
 window.launcher.onLog(appendLog);
 window.launcher.onDeviceCode((code) => {
   deviceVerificationUri = code.verificationUri || deviceVerificationUri;
@@ -474,6 +646,7 @@ window.launcher.onGameState((gameState) => {
   if (gameState.state === 'started') {
     gameExitWasCrash = false;
     gameActive = true;
+    elements.packSelector.disabled = true;
     setStatus('Minecraft запускается', 'busy');
     elements.progressTitle.textContent = 'Minecraft запускается…';
     elements.progressDetail.textContent = `Процесс запущен, PID ${gameState.pid}`;
@@ -483,6 +656,7 @@ window.launcher.onGameState((gameState) => {
     setProgressComplete('Minecraft запущен', 'Игра работает. Лаунчер ожидает её завершения.');
   } else if (gameState.state === 'closed') {
     gameActive = false;
+    elements.packSelector.disabled = busy;
     if (gameExitWasCrash) {
       setStatus('Minecraft завершился с ошибкой', 'error');
     } else {
@@ -499,6 +673,7 @@ window.launcher.onGameState((gameState) => {
     }
   } else if (gameState.state === 'error') {
     gameActive = false;
+    elements.packSelector.disabled = busy;
     setProgressComplete('Не удалось запустить Minecraft', gameState.message || 'Подробности находятся в журнале.');
     showToast(gameState.message || 'Не удалось запустить Minecraft.', 'error');
   }
@@ -506,4 +681,5 @@ window.launcher.onGameState((gameState) => {
 window.launcher.onUpdateState(({ type, data }) => showUpdate(type, data));
 
 drawAvatarFallback();
+renderServerStatus(null);
 initialize().catch(() => {});

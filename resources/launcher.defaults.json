@@ -3,7 +3,7 @@
   "minecraftVersion": "1.21.1",
   "neoForgeVersion": "21.1.235",
   "manifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure/main/pack-manifest.json",
-  "serverAddress": "",
+  "serverAddress": "45.152.160.143:25598",
   "minMemoryMb": 4096,
   "maxMemoryMb": 8192,
   "gameDirectory": "",
@@ -11,5 +11,6 @@
   "closeLauncherOnGameStart": false,
   "autoUpdateLauncher": true,
   "updateRepository": "Jordandor/Tech-adventure-Launcher",
-  "runtimeManifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest-v2.json"
+  "runtimeManifestUrl": "https://raw.githubusercontent.com/Jordandor/Tech-adventure-Runtime/main/runtime-manifest-v2.json",
+  "activePackId": "tech-adventure"
 }
