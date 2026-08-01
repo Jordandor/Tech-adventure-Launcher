@@ -306,10 +306,10 @@ function withMicrosoftLaunchArguments(resolvedVersion, session) {
 
   const accessToken = String(session.accessToken || '').trim();
   const clientId = String(session.clientId || '').trim();
-  const xuid = String(session.xuid || '').trim();
+  const xuidCandidate = String(session.xuid || '').trim();
+  const xuid = /^\d+$/.test(xuidCandidate) ? xuidCandidate : '0';
   if (!accessToken) throw new Error('Microsoft-сессия не содержит токен Minecraft. Обнови вход в лаунчере.');
   if (!clientId) throw new Error('Microsoft-сессия не содержит Client ID. Обнови вход в лаунчере.');
-  if (!/^\d+$/.test(xuid)) throw new Error('Microsoft-сессия не содержит корректный Xbox User ID. Обнови вход в лаунчере.');
 
   const gameArguments = resolvedVersion?.arguments?.game;
   if (!Array.isArray(gameArguments)) {

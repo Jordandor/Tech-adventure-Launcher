@@ -14,6 +14,12 @@ function cacheFileName(username, cacheName) {
 }
 
 
+
+function normalizeXboxUserId(value) {
+  const xuid = String(value || '').trim();
+  return /^\d+$/.test(xuid) ? xuid : '0';
+}
+
 function createMinecraftClientId() {
   return Buffer.from(crypto.randomUUID(), 'utf8').toString('base64');
 }
@@ -148,10 +154,15 @@ class MicrosoftAuthManager {
         throw new Error('Microsoft вернул неполные данные профиля Minecraft.');
       }
 
-      const xbox = await flow.getXboxToken(MINECRAFT_XSTS_RELYING_PARTY);
-      const xuid = String(xbox?.userXUID || '').trim();
-      if (!/^\d+$/.test(xuid)) {
-        throw new Error('Microsoft не вернул Xbox User ID, необходимый для лицензионного запуска Minecraft.');
+      // XUID is a telemetry/launcher argument, not the Minecraft access token itself.
+      // Sisu/XSTS may legitimately omit the optional xid claim. Do not turn a valid
+      // Minecraft Java session into an offline session just because that claim is absent.
+      let xuid = '0';
+      try {
+        const xbox = await flow.getXboxToken(MINECRAFT_XSTS_RELYING_PARTY);
+        xuid = normalizeXboxUserId(xbox?.userXUID);
+      } catch {
+        xuid = '0';
       }
       const clientId = await getOrCreateMinecraftClientId(this.cacheDirectory);
       const skins = Array.isArray(response.profile.skins) ? response.profile.skins : [];
@@ -204,6 +215,7 @@ module.exports = {
   createMinecraftClientId,
   isValidMinecraftClientId,
   getOrCreateMinecraftClientId,
+  normalizeXboxUserId,
   friendlyAuthError,
   MINECRAFT_XSTS_RELYING_PARTY,
   MINECRAFT_CLIENT_ID_FILE

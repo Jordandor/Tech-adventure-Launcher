@@ -9,6 +9,7 @@ const {
   createMinecraftClientId,
   getOrCreateMinecraftClientId,
   isValidMinecraftClientId,
+  normalizeXboxUserId,
   MINECRAFT_CLIENT_ID_FILE
 } = require('../src/core/auth');
 
@@ -33,9 +34,17 @@ test('Client ID сохраняется и переиспользуется ме�
   }
 });
 
-test('Microsoft-сессия использует MSA и получает XUID', async () => {
+test('Microsoft-сессия использует MSA и запрашивает XUID без обязательного xid', async () => {
   const source = await fs.readFile(path.join(__dirname, '..', 'src', 'core', 'auth.js'), 'utf8');
   assert.match(source, /userType:\s*'msa'/);
   assert.match(source, /getXboxToken\(MINECRAFT_XSTS_RELYING_PARTY\)/);
   assert.doesNotMatch(source, /userType:\s*'mojang'/);
+});
+
+
+test('отсутствующий необязательный XUID заменяется на безопасное значение 0', () => {
+  assert.equal(normalizeXboxUserId('2535000000000000'), '2535000000000000');
+  assert.equal(normalizeXboxUserId(''), '0');
+  assert.equal(normalizeXboxUserId(null), '0');
+  assert.equal(normalizeXboxUserId('not-a-number'), '0');
 });

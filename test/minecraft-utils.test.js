@@ -101,17 +101,19 @@ test('аргументы Microsoft получают Client ID и Xbox User ID', 
   assert.equal(resolved.arguments.game[1], '${clientid}');
 });
 
-test('неполная Microsoft-сессия блокируется до запуска игры', () => {
-  const resolved = { arguments: { game: ['--clientId', '${clientid}'] } };
-  assert.throws(
-    () => withMicrosoftLaunchArguments(resolved, {
-      mode: 'microsoft',
-      accessToken: 'token',
-      clientId: 'client',
-      xuid: ''
-    }),
-    /Xbox User ID/
-  );
+test('отсутствующий XUID не блокирует лицензионный запуск и заменяется на 0', () => {
+  const resolved = {
+    arguments: {
+      game: ['--clientId', '${clientid}', '--xuid', '${auth_xuid}']
+    }
+  };
+  const patched = withMicrosoftLaunchArguments(resolved, {
+    mode: 'microsoft',
+    accessToken: 'token',
+    clientId: 'client',
+    xuid: ''
+  });
+  assert.deepEqual(patched.arguments.game, ['--clientId', 'client', '--xuid', '0']);
 });
 
 test('офлайн-запуск не меняет профиль версии', () => {
