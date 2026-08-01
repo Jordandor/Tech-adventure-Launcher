@@ -9,7 +9,9 @@ const DISABLED_SUFFIX = '.disabled';
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_ICON_BYTES = 768 * 1024;
 const MAX_JAR_ENTRIES = 20000;
-const METADATA_CACHE_SCHEMA_VERSION = 2;
+const METADATA_CACHE_SCHEMA_VERSION = 3;
+const CLIENT_MOD_OVERRIDES_FILE = path.join(__dirname, '..', '..', 'resources', 'client-mods.json');
+let cachedClientModOverrides = null;
 const PLATFORM_DEPENDENCY_IDS = new Set([
   'minecraft',
   'neoforge',
@@ -78,8 +80,32 @@ function fallbackName(fileName) {
     .replace(/(^|\s)([a-zа-яё])/giu, (_match, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
 }
 
+function stripTomlInlineComment(value) {
+  const source = String(value || '');
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote && character === '\\' && quote === '"') {
+      escaped = true;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      if (!quote) quote = character;
+      else if (quote === character) quote = '';
+      continue;
+    }
+    if (character === '#' && !quote) return source.slice(0, index).trimEnd();
+  }
+  return source.trimEnd();
+}
+
 function cleanTomlValue(value) {
-  const text = String(value || '').trim();
+  const text = stripTomlInlineComment(value).trim();
   const quoted = text.match(/^(?:"([\s\S]*)"|'([\s\S]*)')$/);
   return (quoted ? quoted[1] ?? quoted[2] : text).replace(/\\n/g, '\n').trim();
 }
@@ -105,6 +131,61 @@ function manifestValue(text, key) {
   const prefix = `${key.toLowerCase()}:`;
   const line = unfolded.find((item) => item.toLowerCase().startsWith(prefix));
   return line ? line.slice(line.indexOf(':') + 1).trim() : '';
+}
+
+function normalizeOverrideKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.jar(?:\.disabled)?$/i, '')
+    .replace(/[-_](?:v?\d+(?:[._-]\d+)*(?:[-+._][a-z0-9]+)*)$/i, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeClientOverrides(raw) {
+  const normalizeList = (values) => new Set((Array.isArray(values) ? values : [])
+    .map(normalizeOverrideKey)
+    .filter(Boolean));
+  return {
+    clientOnly: normalizeList(raw?.clientOnly),
+    notClient: normalizeList(raw?.notClient)
+  };
+}
+
+async function loadClientModOverrides() {
+  if (cachedClientModOverrides) return cachedClientModOverrides;
+  try {
+    const parsed = JSON.parse(await fs.readFile(CLIENT_MOD_OVERRIDES_FILE, 'utf8'));
+    cachedClientModOverrides = normalizeClientOverrides(parsed);
+  } catch {
+    cachedClientModOverrides = normalizeClientOverrides({});
+  }
+  return cachedClientModOverrides;
+}
+
+function clientOverrideKeys(metadata, fileName) {
+  return new Set([
+    metadata?.modId,
+    ...(Array.isArray(metadata?.providedModIds) ? metadata.providedModIds : []),
+    metadata?.name,
+    activeNameFor(fileName)
+  ].map(normalizeOverrideKey).filter(Boolean));
+}
+
+function applyClientSideOverride(metadata, fileName, overrides) {
+  const keys = clientOverrideKeys(metadata, fileName);
+  if ([...keys].some((key) => overrides.notClient.has(key))) {
+    return { ...metadata, clientSide: false, clientSideSource: 'override:not-client' };
+  }
+  if ([...keys].some((key) => overrides.clientOnly.has(key))) {
+    return { ...metadata, clientSide: true, clientSideSource: 'override:client' };
+  }
+  return {
+    ...metadata,
+    clientSide: Boolean(metadata?.clientSide),
+    clientSideSource: metadata?.clientSide ? String(metadata.clientSideSource || 'metadata') : ''
+  };
 }
 
 function normalizedModId(value) {
@@ -172,6 +253,12 @@ function parseNeoForgeMetadata(text, manifestText, loader = 'NeoForge') {
     version = manifestValue(manifestText, 'Implementation-Version')
       || manifestValue(manifestText, 'Specification-Version');
   }
+  const declaredSide = tomlValue(source, 'side').toLowerCase();
+  const clientSideOnly = tomlValue(source, 'clientSideOnly').toLowerCase() === 'true';
+  const manifestModType = manifestValue(manifestText, 'FMLModType').toUpperCase();
+  const clientSide = clientSideOnly
+    || declaredSide === 'client'
+    || manifestModType.includes('CLIENT');
   return {
     loader,
     modId,
@@ -180,7 +267,9 @@ function parseNeoForgeMetadata(text, manifestText, loader = 'NeoForge') {
     name: tomlValue(section, 'displayName'),
     version,
     description: tomlMultilineValue(section, 'description'),
-    logoFile: tomlValue(section, 'logoFile') || tomlValue(source, 'logoFile')
+    logoFile: tomlValue(section, 'logoFile') || tomlValue(source, 'logoFile'),
+    clientSide,
+    clientSideSource: clientSide ? 'neoforge-metadata' : ''
   };
 }
 
@@ -195,6 +284,8 @@ function parseFabricMetadata(text) {
     name: typeof data.name === 'string' ? data.name : '',
     version: String(data.version || ''),
     description: typeof data.description === 'string' ? data.description : '',
+    clientSide: String(data.environment || '').toLowerCase() === 'client',
+    clientSideSource: String(data.environment || '').toLowerCase() === 'client' ? 'fabric-environment' : '',
     logoFile: typeof data.icon === 'string'
       ? data.icon
       : data.icon && typeof data.icon === 'object'
@@ -216,6 +307,8 @@ function parseQuiltMetadata(text) {
     name: typeof metadata.name === 'string' ? metadata.name : '',
     version: String(quilt.version || ''),
     description: typeof metadata.description === 'string' ? metadata.description : '',
+    clientSide: String(data.minecraft?.environment || quilt.environment || '').toLowerCase() === 'client',
+    clientSideSource: String(data.minecraft?.environment || quilt.environment || '').toLowerCase() === 'client' ? 'quilt-environment' : '',
     logoFile: typeof metadata.icon === 'string' ? metadata.icon : ''
   };
 }
@@ -245,7 +338,9 @@ async function inspectModJar(file, fileName, { includeIcon = true } = {}) {
     loader: 'Неизвестно',
     iconDataUrl: '',
     providedModIds: [],
-    dependencies: []
+    dependencies: [],
+    clientSide: false,
+    clientSideSource: ''
   };
 
   let zipfile;
@@ -397,6 +492,7 @@ async function listMods(gameDirectory, { includeIcons = true } = {}) {
     .map((entry) => entry.name);
   const managedPaths = await readManagedPaths(gameDirectory);
   const metadataCache = await readMetadataCache(gameDirectory);
+  const clientOverrides = await loadClientModOverrides();
   const nextCache = {};
   let cacheChanged = false;
   const mods = await mapLimit(files, 5, async (fileName) => {
@@ -409,14 +505,15 @@ async function listMods(gameDirectory, { includeIcons = true } = {}) {
       && cached.size === stat.size
       && Math.abs(Number(cached.mtimeMs) - stat.mtimeMs) < 2
       && (!includeIcons || cached.iconScanned === true);
-    const metadata = canUseCache
+    const rawMetadata = canUseCache
       ? cached.metadata
       : await inspectModJar(fullPath, activeName, { includeIcon: includeIcons });
+    const metadata = applyClientSideOverride(rawMetadata, activeName, clientOverrides);
     nextCache[cacheKey] = {
       size: stat.size,
       mtimeMs: stat.mtimeMs,
       iconScanned: includeIcons || cached?.iconScanned === true,
-      metadata
+      metadata: rawMetadata
     };
     if (!canUseCache) cacheChanged = true;
     return {
@@ -434,10 +531,12 @@ async function listMods(gameDirectory, { includeIcons = true } = {}) {
   }
   mods.sort((a, b) => a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' }) || a.fileName.localeCompare(b.fileName, 'en'));
   const enabledCount = mods.filter((mod) => mod.enabled).length;
+  const clientCount = mods.filter((mod) => mod.clientSide).length;
   return {
     mods,
     enabledCount,
     disabledCount: mods.length - enabledCount,
+    clientCount,
     totalCount: mods.length
   };
 }
@@ -676,6 +775,10 @@ module.exports = {
   disabledManagedPath,
   normalizeModFileName,
   fallbackName,
+  stripTomlInlineComment,
+  cleanTomlValue,
+  normalizeClientOverrides,
+  applyClientSideOverride,
   inspectModJar,
   countMods,
   listMods,

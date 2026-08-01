@@ -34,7 +34,9 @@ async function neoForgeJar({
   version = '1.0',
   modId = 'example_mod',
   name = 'Example Mod',
-  dependencies = []
+  dependencies = [],
+  clientSideOnly = false,
+  mandatoryComments = false
 } = {}) {
   const dependencyBlocks = dependencies.map((dependency) => `
 [[dependencies.${modId}]]
@@ -48,10 +50,10 @@ side="${dependency.side || 'BOTH'}"
     'META-INF/neoforge.mods.toml': `modLoader="javafml"
 loaderVersion="[4,)"
 license="MIT"
-[[mods]]
-modId="${modId}"
-version="${version}"
-displayName="${name}"
+${clientSideOnly ? 'clientSideOnly=true\n' : ''}[[mods]]
+modId="${modId}"${mandatoryComments ? ' #mandatory' : ''}
+version="${version}"${mandatoryComments ? ' #mandatory' : ''}
+displayName="${name}"${mandatoryComments ? ' #mandatory' : ''}
 description='''Тестовый мод'''
 ${dependencyBlocks}`,
     'META-INF/MANIFEST.MF': `Manifest-Version: 1.0\nImplementation-Version: ${version}\n`
@@ -186,3 +188,40 @@ test('кнопки включить все и выключить все меня
   assert.deepEqual(enabled.summary, { enabledCount: 3, disabledCount: 0, totalCount: 3 });
   assert.equal((await readDisabledRegistry(game)).entries.length, 0);
 });
+
+test('TOML-комментарии #mandatory не попадают в название, версию и ID мода', async (t) => {
+  const game = await createGame(t, {
+    'commented.jar': {
+      modId: 'commented_mod',
+      name: 'Commented Mod',
+      version: '2.4.1',
+      mandatoryComments: true
+    }
+  });
+
+  const snapshot = await listMods(game, { includeIcons: false });
+  assert.equal(snapshot.mods[0].modId, 'commented_mod');
+  assert.equal(snapshot.mods[0].name, 'Commented Mod');
+  assert.equal(snapshot.mods[0].version, '2.4.1');
+});
+
+test('клиентские моды помечаются, а Create Springs исключён из пометки', async (t) => {
+  const game = await createGame(t, {
+    'client-visuals.jar': {
+      modId: 'client_visuals',
+      name: 'Client Visuals',
+      clientSideOnly: true
+    },
+    'createsprings-1.2.1.jar': {
+      modId: 'createsprings',
+      name: 'Create Springs',
+      clientSideOnly: true
+    }
+  });
+
+  const snapshot = await listMods(game, { includeIcons: false });
+  assert.equal(snapshot.clientCount, 1);
+  assert.equal(snapshot.mods.find((mod) => mod.modId === 'client_visuals').clientSide, true);
+  assert.equal(snapshot.mods.find((mod) => mod.modId === 'createsprings').clientSide, false);
+});
+

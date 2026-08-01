@@ -18,7 +18,7 @@ const {
 const { writeJsonAtomic } = require('./settings');
 const { isManagedModPath, disabledManagedPath } = require('./mod-manager');
 
-const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.9';
+const USER_AGENT = 'Dekodev-Reborn-Launcher/0.2.10';
 const MAX_ZIP_ENTRIES = 50000;
 
 async function exists(file) {

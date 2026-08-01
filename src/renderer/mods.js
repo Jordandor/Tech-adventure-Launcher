@@ -10,6 +10,8 @@ const elements = {
   totalCount: byId('total-count'),
   enabledCount: byId('enabled-count'),
   disabledCount: byId('disabled-count'),
+  clientCount: byId('client-count'),
+  sort: byId('sort-select'),
   footerStatus: byId('footer-status'),
   toast: byId('toast'),
   enableAll: byId('enable-all'),
@@ -21,13 +23,19 @@ const elements = {
   modalList: byId('decision-list'),
   modalCancel: byId('decision-cancel'),
   modalPrimary: byId('decision-primary'),
-  modalSecondary: byId('decision-secondary')
+  modalSecondary: byId('decision-secondary'),
+  descriptionTooltip: byId('mod-description-tooltip'),
+  descriptionTitle: byId('mod-description-title'),
+  descriptionText: byId('mod-description-text')
 };
 
-let snapshot = { mods: [], enabledCount: 0, disabledCount: 0, totalCount: 0, locked: false };
+let snapshot = { mods: [], enabledCount: 0, disabledCount: 0, clientCount: 0, totalCount: 0, locked: false };
 let filter = 'all';
+let sortMode = localStorage.getItem('mods-sort-mode') || 'name';
+if (!['name', 'client-first'].includes(sortMode)) sortMode = 'name';
 let toastTimer = null;
 let decisionResolve = null;
+let descriptionTimer = null;
 
 function friendlyError(error) {
   return String(error?.message || error || 'Неизвестная ошибка')
@@ -47,22 +55,57 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} МБ`;
 }
 
-function initials(name) {
-  return String(name || '?')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || '')
-    .join('') || '?';
+function compareByName(left, right) {
+  return String(left.name || left.activeFileName || '').localeCompare(
+    String(right.name || right.activeFileName || ''),
+    'ru',
+    { sensitivity: 'base' }
+  ) || String(left.fileName || '').localeCompare(String(right.fileName || ''), 'en');
+}
+
+function sortMods(mods) {
+  return mods.slice().sort((left, right) => {
+    if (sortMode === 'client-first' && Boolean(left.clientSide) !== Boolean(right.clientSide)) {
+      return left.clientSide ? -1 : 1;
+    }
+    return compareByName(left, right);
+  });
 }
 
 function matches(mod) {
   if (filter === 'enabled' && !mod.enabled) return false;
   if (filter === 'disabled' && mod.enabled) return false;
+  if (filter === 'client' && !mod.clientSide) return false;
   const query = elements.search.value.trim().toLocaleLowerCase('ru');
   if (!query) return true;
   return [mod.name, mod.modId, mod.fileName, mod.description, mod.loader]
     .some((value) => String(value || '').toLocaleLowerCase('ru').includes(query));
+}
+
+function hideDescriptionTooltip() {
+  clearTimeout(descriptionTimer);
+  descriptionTimer = null;
+  elements.descriptionTooltip.classList.add('hidden');
+}
+
+function showDescriptionTooltip(row, mod) {
+  elements.descriptionTitle.textContent = mod.name || mod.activeFileName;
+  elements.descriptionText.textContent = mod.description || 'Автор мода не добавил описание в метаданные.';
+  elements.descriptionTooltip.classList.remove('hidden');
+
+  const rowRect = row.getBoundingClientRect();
+  const tooltipRect = elements.descriptionTooltip.getBoundingClientRect();
+  const margin = 12;
+  const left = Math.min(
+    Math.max(margin, rowRect.left + 54),
+    window.innerWidth - tooltipRect.width - margin
+  );
+  let top = rowRect.bottom + 7;
+  if (top + tooltipRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, rowRect.top - tooltipRect.height - 7);
+  }
+  elements.descriptionTooltip.style.left = `${left}px`;
+  elements.descriptionTooltip.style.top = `${top}px`;
 }
 
 function closeDecision(choice = 'cancel') {
@@ -166,7 +209,7 @@ async function toggleSingleMod(mod, nextEnabled) {
 
 function createModRow(mod) {
   const row = document.createElement('article');
-  row.className = `mod-row${mod.enabled ? '' : ' disabled'}`;
+  row.className = `mod-row${mod.enabled ? '' : ' disabled'}${mod.clientSide ? ' client-side' : ''}`;
   row.dataset.fileName = mod.fileName;
 
   const identity = document.createElement('div');
@@ -179,13 +222,32 @@ function createModRow(mod) {
     image.alt = '';
     icon.append(image);
   } else {
-    icon.textContent = initials(mod.name);
+    icon.classList.add('placeholder');
+    const placeholder = document.createElement('span');
+    placeholder.className = 'mod-icon-placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+    const core = document.createElement('i');
+    placeholder.append(core);
+    icon.append(placeholder);
   }
   const copy = document.createElement('div');
   copy.className = 'mod-copy';
+  const titleLine = document.createElement('div');
+  titleLine.className = 'mod-title-line';
   const name = document.createElement('strong');
   name.textContent = mod.name || mod.activeFileName;
-  name.title = mod.description || mod.fileName;
+  titleLine.append(name);
+  if (mod.clientSide) {
+    const clientBadge = document.createElement('span');
+    clientBadge.className = 'client-mod-badge';
+    const sparkle = document.createElement('i');
+    sparkle.className = 'client-mod-sparkle';
+    sparkle.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.textContent = 'Клиентский мод';
+    clientBadge.append(sparkle, label);
+    titleLine.append(clientBadge);
+  }
   const file = document.createElement('span');
   file.textContent = `${mod.activeFileName} · ${formatBytes(mod.size)}`;
   const badges = document.createElement('div');
@@ -199,7 +261,7 @@ function createModRow(mod) {
     dependencyBadge.title = mod.dependencies.join(', ');
     badges.append(dependencyBadge);
   }
-  copy.append(name, file, badges);
+  copy.append(titleLine, file, badges);
   identity.append(icon, copy);
 
   const version = document.createElement('div');
@@ -235,6 +297,13 @@ function createModRow(mod) {
   });
   state.append(stateLabel, toggle);
   row.append(identity, version, loader, state);
+  row.addEventListener('mouseenter', () => {
+    clearTimeout(descriptionTimer);
+    descriptionTimer = setTimeout(() => showDescriptionTooltip(row, mod), 320);
+  });
+  row.addEventListener('mouseleave', hideDescriptionTooltip);
+  row.addEventListener('focusin', () => showDescriptionTooltip(row, mod));
+  row.addEventListener('focusout', hideDescriptionTooltip);
   return row;
 }
 
@@ -242,6 +311,7 @@ function updateCounts() {
   elements.totalCount.textContent = snapshot.totalCount;
   elements.enabledCount.textContent = snapshot.enabledCount;
   elements.disabledCount.textContent = snapshot.disabledCount;
+  elements.clientCount.textContent = snapshot.clientCount || 0;
   elements.enableAll.disabled = snapshot.locked || snapshot.disabledCount === 0;
   elements.disableAll.disabled = snapshot.locked || snapshot.enabledCount === 0;
   elements.footerStatus.textContent = snapshot.locked
@@ -250,7 +320,8 @@ function updateCounts() {
 }
 
 function render() {
-  const visible = snapshot.mods.filter(matches);
+  hideDescriptionTooltip();
+  const visible = sortMods(snapshot.mods.filter(matches));
   elements.list.replaceChildren(...visible.map(createModRow));
   elements.list.classList.toggle('hidden', visible.length === 0);
   elements.empty.classList.toggle('hidden', visible.length !== 0);
@@ -308,7 +379,15 @@ document.querySelectorAll('.filter').forEach((button) => {
     render();
   });
 });
+elements.sort.value = sortMode;
+elements.sort.addEventListener('change', () => {
+  sortMode = elements.sort.value;
+  localStorage.setItem('mods-sort-mode', sortMode);
+  render();
+});
 elements.search.addEventListener('input', render);
+elements.list.addEventListener('scroll', hideDescriptionTooltip, { passive: true });
+window.addEventListener('resize', hideDescriptionTooltip);
 elements.enableAll.addEventListener('click', () => setAll(true));
 elements.disableAll.addEventListener('click', () => setAll(false));
 byId('open-folder').addEventListener('click', () => window.launcher.openModsFolder());

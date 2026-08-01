@@ -50,10 +50,18 @@
               <button id="enable-all" class="bulk-button enable" type="button">Включить все</button>
               <button id="disable-all" class="bulk-button disable" type="button">Выключить все</button>
             </div>
+            <label class="sort-control" for="sort-select">
+              <span>Сортировка</span>
+              <select id="sort-select">
+                <option value="name">По названию</option>
+                <option value="client-first">Клиентские сначала</option>
+              </select>
+            </label>
             <div class="filters" role="tablist" aria-label="Фильтр модов">
               <button class="filter active" data-filter="all" type="button">Все <span id="total-count">—</span></button>
               <button class="filter" data-filter="enabled" type="button">Включены <span id="enabled-count">—</span></button>
               <button class="filter" data-filter="disabled" type="button">Выключены <span id="disabled-count">—</span></button>
+              <button class="filter" data-filter="client" type="button">Клиентские <span id="client-count">—</span></button>
             </div>
           </div>
         </section>
@@ -95,6 +103,10 @@
           <button id="decision-secondary" class="decision-button danger hidden" type="button">Продолжить</button>
         </div>
       </section>
+    </div>
+    <div class="mod-description-tooltip hidden" id="mod-description-tooltip" role="tooltip">
+      <strong id="mod-description-title">Описание мода</strong>
+      <p id="mod-description-text"></p>
     </div>
     <div class="toast hidden" id="toast"></div>
     <script src="mods.js"></script>
