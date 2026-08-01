@@ -205,57 +205,71 @@ footer code { padding: 2px 4px; color: #7e908a; border-radius: 3px; background: 
   .bulk-actions { justify-content: flex-end; }
 }
 
-/* 0.2.11: client-side mod markers, filtering and descriptions */
+/* 0.2.12: client-side mod markers, filtering and descriptions */
 .mod-title-line {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 9px;
+  overflow: visible;
 }
 .mod-title-line > strong {
   min-width: 0;
   flex: 0 1 auto;
 }
-.client-mod-badge {
+/* Overrides the generic .mod-copy span rule so the badge stays on one line. */
+.mod-copy .client-mod-badge {
   display: inline-flex;
   min-width: max-content;
   flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
+  margin-top: 0;
+  overflow: visible;
   color: #e6eeec;
   font-size: 8px;
   font-weight: 750;
+  line-height: 1;
   letter-spacing: 0.01em;
-  text-shadow: 0 0 8px rgba(227, 243, 255, 0.12);
+  text-shadow: 0 0 7px rgba(227, 243, 255, 0.1);
+}
+.mod-copy .client-mod-badge > span {
+  display: inline-block;
+  margin-top: 0;
+  overflow: visible;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 .client-mod-sparkle {
   position: relative;
   display: inline-block;
-  width: 10px;
-  height: 10px;
-  flex: 0 0 10px;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
   overflow: visible;
-  transform: rotate(45deg) scale(0.84);
+  transform: rotate(45deg);
   border-radius: 1px;
-  background: #f8fdff;
+  background: #f7fcff;
   box-shadow:
-    0 0 3px rgba(255, 255, 255, 0.98),
-    0 0 7px rgba(205, 237, 255, 0.94),
-    0 0 13px rgba(129, 204, 255, 0.64),
-    0 0 20px rgba(129, 204, 255, 0.28);
-  animation: client-mod-shimmer 2.8s ease-in-out infinite;
+    0 0 2px rgba(255, 255, 255, 0.95),
+    0 0 5px rgba(209, 239, 255, 0.72),
+    0 0 9px rgba(133, 207, 255, 0.34);
 }
 .client-mod-sparkle::before,
 .client-mod-sparkle::after {
   position: absolute;
-  inset: 50% auto auto 50%;
+  top: 50%;
+  left: 50%;
   content: "";
   border-radius: 10px;
-  background: rgba(247, 252, 255, 0.88);
+  background: rgba(248, 253, 255, 0.82);
   transform: translate(-50%, -50%) rotate(-45deg);
 }
-.client-mod-sparkle::before { width: 16px; height: 2px; }
-.client-mod-sparkle::after { width: 2px; height: 16px; }
+.client-mod-sparkle::before { width: 10px; height: 1px; }
+.client-mod-sparkle::after { width: 1px; height: 10px; }
 .mod-row.client-side {
   background:
     linear-gradient(90deg, rgba(228, 238, 236, 0.055), rgba(205, 220, 216, 0.025) 56%, rgba(255, 255, 255, 0.018));
@@ -294,34 +308,15 @@ footer code { padding: 2px 4px; color: #7e908a; border-radius: 3px; background: 
   line-height: 1.55;
   white-space: normal;
 }
-/* The badge icon is an inline <i>; explicit display is required for width/height to apply. */
-@keyframes client-mod-shimmer {
-  0%, 64%, 100% {
-    opacity: 0.72;
-    filter: brightness(0.9);
-    transform: rotate(45deg) scale(0.72);
-  }
-  74% {
-    opacity: 1;
-    filter: brightness(1.35);
-    transform: rotate(45deg) scale(1.02);
-  }
-  84% {
-    opacity: 0.84;
-    filter: brightness(1.02);
-    transform: rotate(45deg) scale(0.82);
-  }
-}
 @keyframes mod-description-in {
   from { opacity: 0; transform: translateY(-3px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .client-mod-sparkle { animation: none; }
   .mod-description-tooltip { animation: none; }
 }
 
-/* 0.2.11: sorting and Dekodev Reborn placeholder */
+/* 0.2.12: sorting and Dekodev Reborn placeholder */
 .sort-control {
   display: grid;
   gap: 3px;
