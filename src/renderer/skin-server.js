@@ -260,7 +260,7 @@
     context.imageSmoothingEnabled = false;
     drawFallbackHead(context);
     try {
-      const skin = await api.getSkin(name, 'game');
+      const skin = await api.getSkin(name, 'uploaded');
       if (!skin.exists) return;
       const image = await imageFromBase64(skin.data);
       context.clearRect(0, 0, 32, 32);
