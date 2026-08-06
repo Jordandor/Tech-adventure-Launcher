@@ -1,0 +1,170 @@
+.profile-grid {
+  grid-template-columns: minmax(340px, 1.12fr) minmax(235px, .72fr) minmax(285px, .84fr) !important;
+  align-items: stretch;
+}
+
+.skin-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skin-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.skin-panel-heading h2 {
+  margin: 6px 0 0;
+  font-size: 16px;
+}
+
+.skin-state-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.16);
+  box-shadow: 0 0 0 4px rgba(255,255,255,.03);
+}
+
+.skin-state-dot.checking { background: #efb24c; animation: skinPulse 1s infinite alternate; }
+.skin-state-dot.online { background: #5ee89a; box-shadow: 0 0 13px rgba(94,232,154,.5); }
+.skin-state-dot.error { background: #ff6b76; }
+
+.skin-preview-shell {
+  position: relative;
+  flex: 1;
+  min-height: 205px;
+  margin: 12px 0 10px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(57,184,159,.13), transparent 52%),
+    linear-gradient(180deg, rgba(255,255,255,.025), rgba(0,0,0,.08));
+}
+
+.skin-preview-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(to bottom, transparent, black 25%, black 75%, transparent);
+}
+
+#skin-preview-canvas {
+  position: relative;
+  z-index: 1;
+  width: 146px;
+  height: 211px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 18px 18px rgba(0,0,0,.36));
+  transform: perspective(600px) rotateY(-7deg);
+}
+
+.skin-preview-empty {
+  position: relative;
+  z-index: 1;
+  padding: 0 18px;
+  color: rgba(223,232,230,.45);
+  font-size: 13px;
+  text-align: center;
+}
+
+.skin-upload-button {
+  width: 100%;
+  min-height: 42px;
+}
+
+.skin-upload-button.loading { opacity: .66; cursor: wait; }
+
+.skin-message {
+  min-height: 30px;
+  margin: 8px 0 -4px;
+  color: rgba(223,232,230,.48);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.skin-message[data-kind="success"] { color: #7bdcad; }
+.skin-message[data-kind="error"] { color: #ff8891; }
+.skin-message[data-kind="muted"] { color: rgba(223,232,230,.48); }
+
+.server-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skin-ui-hidden { display: none !important; }
+
+.online-player-list {
+  min-height: 122px;
+  max-height: 184px;
+  margin-top: 16px;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(64,190,164,.45) rgba(255,255,255,.04);
+}
+
+.online-player-list::-webkit-scrollbar { width: 6px; }
+.online-player-list::-webkit-scrollbar-track { background: rgba(255,255,255,.035); border-radius: 8px; }
+.online-player-list::-webkit-scrollbar-thumb { background: rgba(64,190,164,.42); border-radius: 8px; }
+
+.online-player-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 43px;
+  padding: 5px 7px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+  color: #edf5f3;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.online-player-row:last-child { border-bottom: 0; }
+
+.online-player-head {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 7px;
+  image-rendering: pixelated;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.11), 0 5px 12px rgba(0,0,0,.25);
+}
+
+.online-list-empty {
+  display: grid;
+  place-items: center;
+  min-height: 118px;
+  color: rgba(223,232,230,.42);
+  font-size: 12px;
+  text-align: center;
+}
+
+.online-list-empty.error { color: #ff8891; }
+
+@keyframes skinPulse {
+  from { opacity: .45; transform: scale(.92); }
+  to { opacity: 1; transform: scale(1.08); }
+}
+
+@media (max-width: 1220px) {
+  .profile-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .auth-panel { grid-column: 1 / -1; }
+}
