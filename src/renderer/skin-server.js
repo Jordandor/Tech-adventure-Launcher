@@ -22,12 +22,12 @@
       <span class="skin-state-dot" id="skin-state-dot"></span>
     </div>
     <div class="skin-preview-shell" id="skin-preview-shell">
-      <canvas id="skin-preview-canvas" width="180" height="260" aria-label="Трёхмерное отображение скина"></canvas>
+      <canvas id="skin-preview-canvas" aria-label="Трёхмерное отображение скина"></canvas>
       <div class="skin-preview-empty" id="skin-preview-empty">Скин ещё не загружен</div>
+      <div class="skin-inline-message hidden" id="skin-message" aria-live="polite"></div>
     </div>
     <input id="skin-file-input" type="file" accept="image/png,.png" hidden>
     <button id="skin-upload-button" class="secondary-button skin-upload-button" type="button">Загрузить скин на сервер</button>
-    <p class="skin-message" id="skin-message">Введите ник, затем выберите PNG 64×64 или 64×32.</p>
   `;
   serverPanel.parentElement.insertBefore(skinPanel, serverPanel);
 
@@ -43,6 +43,7 @@
 
   const title = document.getElementById('skin-server-title');
   const stateDot = document.getElementById('skin-state-dot');
+  const previewShell = document.getElementById('skin-preview-shell');
   const canvas = document.getElementById('skin-preview-canvas');
   const emptyPreview = document.getElementById('skin-preview-empty');
   const uploadButton = document.getElementById('skin-upload-button');
@@ -55,10 +56,11 @@
   const playerCount = document.getElementById('server-player-count');
   const playerLimit = document.getElementById('server-player-limit');
 
-  let currentName = '';
   let currentExists = false;
   let statusTimer = null;
+  let messageTimer = null;
   let refreshSequence = 0;
+  let skinViewer = null;
 
   function selectedPlayerName() {
     if (microsoftMode?.classList.contains('active')) {
@@ -69,16 +71,79 @@
     return playerNamePattern.test(value) ? value : '';
   }
 
-  function setSkinMessage(text, kind = '') {
+  function setSkinMessage(text = '', kind = '', hideAfterMs = 0) {
+    clearTimeout(messageTimer);
     message.textContent = text;
     message.dataset.kind = kind;
+    message.classList.toggle('hidden', !text);
+    if (text && hideAfterMs > 0) {
+      messageTimer = setTimeout(() => {
+        message.textContent = '';
+        message.classList.add('hidden');
+      }, hideAfterMs);
+    }
+  }
+
+  function ensureSkinViewer() {
+    if (skinViewer) return skinViewer;
+    if (!window.skinview3d?.SkinViewer) {
+      throw new Error('Модуль трёхмерного отображения скина не загрузился.');
+    }
+
+    skinViewer = new window.skinview3d.SkinViewer({
+      canvas,
+      width: Math.max(220, Math.floor(previewShell.clientWidth)),
+      height: Math.max(255, Math.floor(previewShell.clientHeight)),
+      fov: 35,
+      zoom: 0.92,
+      enableControls: true,
+      pixelRatio: 'match-device'
+    });
+    skinViewer.background = null;
+    skinViewer.autoRotate = false;
+    skinViewer.controls.enablePan = false;
+    skinViewer.controls.enableZoom = false;
+    skinViewer.controls.enableRotate = true;
+    skinViewer.controls.minPolarAngle = Math.PI * 0.36;
+    skinViewer.controls.maxPolarAngle = Math.PI * 0.64;
+    skinViewer.globalLight.intensity = 3.1;
+    skinViewer.cameraLight.intensity = 0.72;
+    return skinViewer;
+  }
+
+  function resizeSkinViewer() {
+    if (!skinViewer) return;
+    const width = Math.max(220, Math.floor(previewShell.clientWidth));
+    const height = Math.max(255, Math.floor(previewShell.clientHeight));
+    skinViewer.width = width;
+    skinViewer.height = height;
+  }
+
+  function applyPreviewPose(viewer) {
+    const skin = viewer.playerObject.skin;
+    skin.resetJoints();
+    viewer.playerWrapper.rotation.y = -0.58;
+    skin.head.rotation.y = -0.06;
+    skin.rightArm.rotation.x = 0.16;
+    skin.rightArm.rotation.z = 0.035;
+    skin.leftArm.rotation.x = -0.13;
+    skin.leftArm.rotation.z = -0.025;
+    skin.rightLeg.rotation.x = -0.09;
+    skin.leftLeg.rotation.x = 0.09;
   }
 
   function clearPreview() {
-    const context = canvas.getContext('2d');
-    context.clearRect(0, 0, canvas.width, canvas.height);
     canvas.classList.add('hidden');
     emptyPreview.classList.remove('hidden');
+  }
+
+  async function showSkinModel(base64) {
+    const viewer = ensureSkinViewer();
+    resizeSkinViewer();
+    await viewer.loadSkin(`data:image/png;base64,${base64}`, { model: 'auto-detect' });
+    applyPreviewPose(viewer);
+    canvas.classList.remove('hidden');
+    emptyPreview.classList.add('hidden');
   }
 
   function imageFromBase64(base64) {
@@ -90,80 +155,23 @@
     });
   }
 
-  function drawPixelFace(context, image, source, destination, shade = 1) {
-    context.save();
-    context.imageSmoothingEnabled = false;
-    context.globalAlpha = shade;
-    context.drawImage(image, source.x, source.y, source.w, source.h,
-      destination.x, destination.y, destination.w, destination.h);
-    context.restore();
-  }
-
-  function drawPart(context, image, x, y, front, side, top, width, height, depth, scale) {
-    const frontRect = { x, y: y + depth * scale, w: width * scale, h: height * scale };
-    const sideRect = { x: x + width * scale, y, w: depth * scale, h: height * scale };
-    const topRect = { x, y, w: width * scale, h: depth * scale };
-    drawPixelFace(context, image, top, topRect, 0.92);
-    drawPixelFace(context, image, side, sideRect, 0.72);
-    drawPixelFace(context, image, front, frontRect, 1);
-    context.strokeStyle = 'rgba(0,0,0,.18)';
-    context.lineWidth = 1;
-    context.strokeRect(frontRect.x + 0.5, frontRect.y + 0.5, frontRect.w - 1, frontRect.h - 1);
-  }
-
-  function drawSkinModel(image) {
-    const context = canvas.getContext('2d');
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.imageSmoothingEnabled = false;
-    context.save();
-    context.translate(13, 2);
-
-    const s = 3.05;
-    drawPart(context, image, 53, 5,
-      { x: 8, y: 8, w: 8, h: 8 }, { x: 0, y: 8, w: 8, h: 8 }, { x: 8, y: 0, w: 8, h: 8 },
-      8, 8, 4, s);
-    drawPart(context, image, 53, 42,
-      { x: 20, y: 20, w: 8, h: 12 }, { x: 16, y: 20, w: 4, h: 12 }, { x: 20, y: 16, w: 8, h: 4 },
-      8, 12, 3.2, s);
-    drawPart(context, image, 37, 42,
-      { x: 44, y: 20, w: 4, h: 12 }, { x: 40, y: 20, w: 4, h: 12 }, { x: 44, y: 16, w: 4, h: 4 },
-      4, 12, 2.5, s);
-    const leftArmFront = image.height >= 64 ? { x: 36, y: 52, w: 4, h: 12 } : { x: 44, y: 20, w: 4, h: 12 };
-    const leftArmSide = image.height >= 64 ? { x: 32, y: 52, w: 4, h: 12 } : { x: 40, y: 20, w: 4, h: 12 };
-    const leftArmTop = image.height >= 64 ? { x: 36, y: 48, w: 4, h: 4 } : { x: 44, y: 16, w: 4, h: 4 };
-    drawPart(context, image, 87, 42, leftArmFront, leftArmSide, leftArmTop, 4, 12, 2.5, s);
-    drawPart(context, image, 53, 88,
-      { x: 4, y: 20, w: 4, h: 12 }, { x: 0, y: 20, w: 4, h: 12 }, { x: 4, y: 16, w: 4, h: 4 },
-      4, 12, 2.5, s);
-    const leftLegFront = image.height >= 64 ? { x: 20, y: 52, w: 4, h: 12 } : { x: 4, y: 20, w: 4, h: 12 };
-    const leftLegSide = image.height >= 64 ? { x: 16, y: 52, w: 4, h: 12 } : { x: 0, y: 20, w: 4, h: 12 };
-    const leftLegTop = image.height >= 64 ? { x: 20, y: 48, w: 4, h: 4 } : { x: 4, y: 16, w: 4, h: 4 };
-    drawPart(context, image, 68, 88, leftLegFront, leftLegSide, leftLegTop, 4, 12, 2.5, s);
-
-    context.restore();
-    canvas.classList.remove('hidden');
-    emptyPreview.classList.add('hidden');
-  }
-
   async function refreshSkinState() {
     const sequence = ++refreshSequence;
     const name = selectedPlayerName();
-    currentName = name;
     currentExists = false;
     title.classList.add('hidden');
     uploadButton.textContent = 'Загрузить скин на сервер';
     stateDot.className = 'skin-state-dot';
     clearPreview();
+    setSkinMessage();
 
     if (!name) {
       uploadButton.disabled = true;
-      setSkinMessage('Введите корректный ник игрока.', 'muted');
       return;
     }
 
     uploadButton.disabled = true;
     stateDot.classList.add('checking');
-    setSkinMessage('Проверяю скин на сервере…', 'muted');
     try {
       const status = await api.status(name);
       if (sequence !== refreshSequence || name !== selectedPlayerName()) return;
@@ -171,19 +179,15 @@
       if (!currentExists) {
         stateDot.className = 'skin-state-dot';
         uploadButton.textContent = 'Загрузить скин на сервер';
-        setSkinMessage('PNG 64×64 или 64×32, не более 2 МБ.', 'muted');
         return;
       }
 
       title.classList.remove('hidden');
       uploadButton.textContent = 'Обновить скин на сервере';
       stateDot.className = 'skin-state-dot online';
-      setSkinMessage('В лаунчере отображается исходный загруженный скин.', 'success');
       const skin = await api.getSkin(name, 'uploaded');
       if (sequence !== refreshSequence || !skin.exists) return;
-      const image = await imageFromBase64(skin.data);
-      if (sequence !== refreshSequence) return;
-      drawSkinModel(image);
+      await showSkinModel(skin.data);
     } catch (error) {
       if (sequence !== refreshSequence) return;
       stateDot.className = 'skin-state-dot error';
@@ -210,7 +214,7 @@
 
   uploadButton.addEventListener('click', () => {
     if (!selectedPlayerName()) {
-      setSkinMessage('Сначала введи корректный ник.', 'error');
+      setSkinMessage('Сначала введи корректный ник.', 'error', 3500);
       return;
     }
     fileInput.value = '';
@@ -223,13 +227,13 @@
     if (!file || !name) return;
     uploadButton.disabled = true;
     uploadButton.classList.add('loading');
-    setSkinMessage('Проверяю и загружаю скин…', 'muted');
+    setSkinMessage('Загрузка скина…', 'muted');
     try {
       await validateSkinFile(file);
       const bytes = await file.arrayBuffer();
       await api.upload(name, bytes);
-      setSkinMessage('Скин успешно загружен на сервер.', 'success');
       await refreshSkinState();
+      setSkinMessage('Скин обновлён.', 'success', 2500);
     } catch (error) {
       setSkinMessage(error?.message || 'Не удалось загрузить скин.', 'error');
     } finally {
@@ -314,6 +318,7 @@
   offlineMode?.addEventListener('click', scheduleSkinRefresh);
   microsoftMode?.addEventListener('click', scheduleSkinRefresh);
   new MutationObserver(scheduleSkinRefresh).observe(microsoftName || document.body, { childList: true, subtree: true, characterData: true });
+  new ResizeObserver(resizeSkinViewer).observe(previewShell);
 
   refreshSkinState();
   refreshPlayers();

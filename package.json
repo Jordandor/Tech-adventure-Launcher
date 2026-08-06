@@ -1,6 +1,6 @@
 {
   "name": "tech-adventure-launcher",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "private": true,
   "description": "Лаунчер сообщества Dekodev Reborn для сервера Tech Adventure на Minecraft 1.21.1 NeoForge",
   "main": "src/main-wrapper.js",
@@ -19,7 +19,8 @@
     "@xmcl/installer": "6.1.2",
     "electron-updater": "6.8.9",
     "prismarine-auth": "3.1.1",
-    "yauzl": "3.4.0"
+    "yauzl": "3.4.0",
+    "skinview3d": "3.4.2"
   },
   "devDependencies": {
     "electron": "43.2.0",
@@ -47,7 +48,8 @@
     "files": [
       "src/**/*",
       "resources/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/skinview3d/bundles/skinview3d.bundle.js"
     ],
     "win": {
       "icon": "build/icon.ico",
